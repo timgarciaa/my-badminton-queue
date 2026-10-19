@@ -28,14 +28,19 @@ export default function App() {
   return (
     <div className="flex h-full flex-col pt-[env(safe-area-inset-top)]">
       <header className="flex items-center gap-6 border-b border-slate-200 bg-white px-6 py-3">
-        <h1 className="text-2xl font-black tracking-tight whitespace-nowrap text-teal-700">Serve N&apos; Shout</h1>
-        <span className="text-slate-500">
-          {new Date(session.date + 'T00:00').toLocaleDateString(undefined, {
-            weekday: 'long',
-            day: 'numeric',
-            month: 'short',
-          })}
-        </span>
+        <div className="flex items-baseline gap-6">
+          <h1 className="text-2xl font-black tracking-tight whitespace-nowrap text-teal-700">
+            My Badminton Queue{' '}
+            <span className="text-base font-semibold tracking-normal text-teal-600/80">by Serve N&apos; Shout</span>
+          </h1>
+          <span className="whitespace-nowrap text-slate-500">
+            {new Date(session.date + 'T00:00').toLocaleDateString(undefined, {
+              weekday: 'long',
+              day: 'numeric',
+              month: 'short',
+            })}
+          </span>
+        </div>
         <div className="ml-auto flex gap-6 text-sm text-slate-600">
           <Stat label="Present" value={session.attendees.length} />
           <Stat label="Waiting" value={session.queue.length} />
