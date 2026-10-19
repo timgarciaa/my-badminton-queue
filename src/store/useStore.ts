@@ -1,8 +1,9 @@
 import { useMemo } from 'react'
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-import { dequeue, enqueue, move, pushFront, swap } from '../lib/queue'
-import type { Game, GameSwap, Gender, Pair, Player, Session, Skill } from '../types'
+import { heldIds, isSetReady, setIds } from '../lib/plan'
+import { applySwap, dequeue, enqueue, move, pushFront, swap } from '../lib/queue'
+import type { Game, GameSwap, Gender, Pair, Player, Session, SetGame, Skill } from '../types'
 
 const uid = () => crypto.randomUUID()
 const today = () => new Date().toLocaleDateString('en-CA')
@@ -53,8 +54,12 @@ interface State {
   setSessionField: (field: 'courtFee' | 'shuttlePrice' | 'extraShuttles', value: number) => void
   setCourtCount: (n: number) => void
 
-  /** Start a game; `swap` (if any) is applied to the queue first. */
-  startGame: (court: number, teamA: Pair, teamB: Pair, swap?: GameSwap) => void
+  /** Hold four players for a game together; they play next once all four are free. */
+  addSetGame: (teamA: Pair, teamB: Pair) => void
+  removeSetGame: (id: string) => void
+
+  /** Start a game; `swap` (if any) is applied to the queue first. `setId` marks a set game being played. */
+  startGame: (court: number, teamA: Pair, teamB: Pair, swap?: GameSwap, setId?: string) => void
   addShuttle: (gameId: string, delta: number) => void
   endGame: (gameId: string, winner?: 'A' | 'B') => void
   /** Set or clear the winner of a finished game, in this session or history. */
@@ -123,6 +128,7 @@ export const useStore = create<State>()(
               ...s,
               attendees: s.attendees.filter((a) => a.playerId !== playerId),
               queue: dequeue(s.queue, [playerId]),
+              setGames: s.setGames?.filter((g) => !setIds(g).includes(playerId)),
             }
           }),
 
@@ -145,11 +151,14 @@ export const useStore = create<State>()(
         setManualOrder: (order, movedIds) =>
           updateSession((s) => {
             const queue = order.filter((id) => s.queue.includes(id))
+            // Players held for a set game don't count towards the next normal game.
+            const held = heldIds(s.setGames)
+            const free = queue.filter((id) => !held.has(id))
             return {
               ...s,
               queue,
               locked: [...new Set([...(s.locked ?? []), ...movedIds])],
-              nextTeams: queue.length >= 4 ? { teamA: [queue[0], queue[1]], teamB: [queue[2], queue[3]] } : undefined,
+              nextTeams: free.length >= 4 ? { teamA: [free[0], free[1]], teamB: [free[2], free[3]] } : undefined,
             }
           }),
 
@@ -169,23 +178,44 @@ export const useStore = create<State>()(
             return { ...s, courtCount: count, courts }
           }),
 
-        startGame: (court, teamA, teamB, gameSwap) =>
+        addSetGame: (teamA, teamB) =>
+          updateSession((s) => {
+            const ids = [...teamA, ...teamB]
+            const set: SetGame = { id: uid(), teamA, teamB, createdAt: Date.now() }
+            const overlaps = (t?: { teamA: Pair; teamB: Pair }) => !!t && setIds(t).some((id) => ids.includes(id))
+            return {
+              ...s,
+              // A player can only be in one set game.
+              setGames: [...(s.setGames ?? []).filter((g) => !overlaps(g)), set],
+              nextTeams: overlaps(s.nextTeams) ? undefined : s.nextTeams,
+            }
+          }),
+
+        removeSetGame: (id) => updateSession((s) => ({ ...s, setGames: s.setGames?.filter((g) => g.id !== id) })),
+
+        startGame: (court, teamA, teamB, gameSwap, setId) =>
           updateSession((s) => {
             if (s.courts[court - 1]) return s
             const number = Math.max(0, ...s.games.map((g, i) => g.number ?? i + 1)) + 1
             const game: Game = { id: uid(), number, court, teamA, teamB, startedAt: Date.now(), shuttles: 0 }
             if (gameSwap) game.swap = gameSwap
+            if (setId) game.set = true
             const ids = [...teamA, ...teamB]
             // The swapped-out player takes the swapped-in player's place in line.
-            const queue = gameSwap ? swap(s.queue, gameSwap.out, gameSwap.in) : s.queue
+            const queue = gameSwap ? applySwap(s.queue, gameSwap) : s.queue
+            // Ready sets were waiting behind this game; they play next.
+            const setGames = s.setGames
+              ?.filter((g) => g.id !== setId)
+              .map((g) => (!setId && isSetReady(g, queue) ? { ...g, due: true } : g))
             return {
               ...s,
               games: [...s.games, game],
               courts: s.courts.map((g, i) => (i === court - 1 ? game.id : g)),
               queue: dequeue(queue, ids),
-              // Manual queue changes only hold until the next game starts.
-              locked: [],
-              nextTeams: undefined,
+              setGames,
+              // Manual queue changes only hold until the next game starts
+              // (a set game doesn't use them, so they carry over).
+              ...(setId ? {} : { locked: [], nextTeams: undefined }),
             }
           }),
 
@@ -228,19 +258,25 @@ export const useStore = create<State>()(
             const active = (id: string) => s.attendees.some((a) => a.playerId === id && !a.resting)
             let ids = [...game.teamA, ...game.teamB]
             let queue = s.queue
-            // Skip if the swapped-out player has since gone on another court.
-            if (game.swap && s.queue.includes(game.swap.out)) {
-              // Undo the swap too: the original four go back to the front,
-              // and the swapped-in player returns to right behind them.
-              const { in: inId, out } = game.swap
+            // Undo the swaps too: the original four go back to the front, and
+            // the swapped-in players return to right behind them. Skipped for
+            // a swapped-out player who has since gone on another court.
+            const moves = game.swap ? [game.swap, ...(game.swap.also ? [game.swap.also] : [])] : []
+            for (const { in: inId, out } of moves) {
+              if (!s.queue.includes(out)) continue
               ids = [...ids.map((id) => (id === inId ? out : id)), inId]
               queue = dequeue(queue, [out])
             }
+            // A cancelled set game goes back to waiting as a set.
+            const setGames = game.set
+              ? [{ id: uid(), teamA: game.teamA, teamB: game.teamB, createdAt: game.startedAt, due: true }, ...(s.setGames ?? [])]
+              : s.setGames
             return {
               ...s,
               games: s.games.filter((g) => g.id !== gameId),
               courts: s.courts.map((c) => (c === gameId ? null : c)),
               queue: pushFront(queue, ids.filter(active)),
+              setGames,
             }
           }),
 

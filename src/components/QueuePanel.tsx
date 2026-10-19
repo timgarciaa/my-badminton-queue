@@ -1,12 +1,13 @@
 import { useState, type PointerEvent as ReactPointerEvent } from 'react'
-import type { PlannedGame } from '../lib/plan'
+import { setIds, type PlannedGame } from '../lib/plan'
 import { useStore } from '../store/useStore'
-import type { GameSwap, Pair, Player } from '../types'
+import type { GameSwap, Pair, Player, SetGame } from '../types'
 import { EmptyState, PlayerTags } from './ui'
 
 const SWAP_REASON: Record<GameSwap['reason'], string> = {
   rematch: " so the same four don't play together again",
   repeat: " so partners don't repeat",
+  variety: ' so they play with new people',
   lopsided: ' for a more even game',
 }
 
@@ -32,12 +33,13 @@ export function QueuePanel({
   onGoToCheckIn,
 }: {
   players: Map<string, Player>
-  plan: { games: PlannedGame[]; rest: string[]; order: string[] }
+  plan: { games: PlannedGame[]; rest: string[]; order: string[]; held: string[] }
   onGoToCheckIn: () => void
 }) {
   const session = useStore((s) => s.session)
   const setResting = useStore((s) => s.setResting)
   const setManualOrder = useStore((s) => s.setManualOrder)
+  const removeSetGame = useStore((s) => s.removeSetGame)
   const clearManual = useStore((s) => s.clearManual)
   const [selected, setSelected] = useState<string | null>(null)
   const [drag, setDrag] = useState<Drag | null>(null)
@@ -45,10 +47,15 @@ export function QueuePanel({
   const name = (id: string) => players.get(id)?.name
   const { order } = plan
   const next = plan.games[0]
-  const manual = !!session.nextTeams || !!session.locked?.length
+  const setNext = !!next?.set
+  const manual = !setNext && (!!session.nextTeams || !!session.locked?.length)
+  // Set game players stay put; everyone else can be moved around them.
+  const fixedIds = new Set([...(next && setNext ? setIds(next) : []), ...plan.held])
+  const setGames = session.setGames ?? []
 
   const swapIds = (a: string, b: string) => {
     setSelected(null)
+    if (fixedIds.has(a) || fixedIds.has(b)) return
     const i = order.indexOf(a)
     const j = order.indexOf(b)
     if (a === b || i < 0 || j < 0) return
@@ -65,12 +72,13 @@ export function QueuePanel({
 
   // Arrows: a next-game player moving down trades places with the first
   // waiting player; waiting players move one spot.
-  const grouped = next ? 4 : 0
+  const movable = order.filter((id) => !fixedIds.has(id))
+  const grouped = next && !setNext ? 4 : 0
   const target = (id: string, dir: 1 | -1): string | null => {
-    const i = order.indexOf(id)
+    const i = movable.indexOf(id)
     if (i < 0) return null
-    if (i < grouped) return dir === 1 ? (order[grouped] ?? null) : null
-    return i + dir >= 0 ? (order[i + dir] ?? null) : null
+    if (i < grouped) return dir === 1 ? (movable[grouped] ?? null) : null
+    return i + dir >= 0 ? (movable[i + dir] ?? null) : null
   }
   // Dragging uses window listeners so quick drags and lost pointer capture
   // still land; the drop target is whatever row is under the finger.
@@ -97,6 +105,7 @@ export function QueuePanel({
     const down = target(id, 1)
     return {
       id,
+      fixed: fixedIds.has(id),
       players,
       selected: selected === id,
       dropTarget: !!drag && drag.over === id && drag.id !== id,
@@ -126,6 +135,9 @@ export function QueuePanel({
         <section className="border-b-4 border-slate-100 px-2 pt-2 pb-3">
           <div className="flex items-center gap-2 px-1 pb-1.5">
             <h3 className="text-sm font-bold tracking-wide text-teal-700 uppercase">Next game</h3>
+            {setNext && (
+              <span className="rounded-full bg-violet-100 px-2 py-0.5 text-xs font-semibold text-violet-700">Set game</span>
+            )}
             {manual && (
               <>
                 <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-600">
@@ -143,13 +155,42 @@ export function QueuePanel({
           {next.swap && (
             <p className="mt-2 rounded-lg bg-sky-50 px-2.5 py-1.5 text-xs text-sky-800 ring-1 ring-sky-200">
               <strong>{name(next.swap.in)}</strong> moved up for <strong>{name(next.swap.out)}</strong>
+              {next.swap.also && (
+                <>
+                  {' '}
+                  and <strong>{name(next.swap.also.in)}</strong> for <strong>{name(next.swap.also.out)}</strong>
+                </>
+              )}
               {SWAP_REASON[next.swap.reason]}.
             </p>
           )}
           <p className="mt-2 px-1 text-xs text-slate-400">
-            {selected ? `Tap another player to swap with ${name(selected)}` : 'Drag ⠿ or tap two players to swap them'}
+            {setNext
+              ? 'These four asked to play together.'
+              : selected
+                ? `Tap another player to swap with ${name(selected)}`
+                : 'Drag ⠿ or tap two players to swap them'}
           </p>
         </section>
+      )}
+      {setGames.filter((g) => g.id !== next?.set).length > 0 && (
+        <section className="border-b-4 border-slate-100 px-2 pt-2 pb-3">
+          <h3 className="px-1 pb-1.5 text-sm font-bold tracking-wide text-violet-700 uppercase">Set games</h3>
+          <ul className="space-y-2">
+            {setGames
+              .filter((g) => g.id !== next?.set)
+              .map((g) => (
+                <SetGameRow key={g.id} game={g} name={name} onCancel={() => removeSetGame(g.id)} />
+              ))}
+          </ul>
+        </section>
+      )}
+      {setNext && next && (
+        <div className="px-3 pt-2">
+          <button className="text-xs font-semibold text-slate-500 underline" onClick={() => removeSetGame(next.set!)}>
+            Cancel set game
+          </button>
+        </div>
       )}
       {plan.rest.length > 0 && (
         <section className="px-2 pt-2 pb-3">
@@ -206,8 +247,44 @@ function TeamBlock({ pair, side, rowProps }: { pair: Pair; side: 'A' | 'B'; rowP
   )
 }
 
+/** A set game still waiting for some of its players, and why. */
+function SetGameRow({ game, name, onCancel }: { game: SetGame; name: (id: string) => string | undefined; onCancel: () => void }) {
+  const session = useStore((s) => s.session)
+  const status = (id: string) => {
+    const court = session.games.find((g) => !g.endedAt && [...g.teamA, ...g.teamB].includes(id))?.court
+    if (court) return `on court ${court}`
+    const a = session.attendees.find((x) => x.playerId === id)
+    if (!a) return 'not checked in'
+    if (a.resting) return 'resting'
+    return null
+  }
+  const waitingFor = setIds(game)
+    .map((id) => ({ id, why: status(id) }))
+    .filter((x) => x.why)
+  return (
+    <li className="rounded-xl bg-violet-50 px-3 py-2 ring-1 ring-violet-200">
+      <div className="flex items-start gap-2">
+        <div className="min-w-0 flex-1 leading-tight font-semibold">
+          <div>{game.teamA.map(name).join(' & ')}</div>
+          <div className="text-xs font-bold text-slate-400">VS</div>
+          <div>{game.teamB.map(name).join(' & ')}</div>
+        </div>
+        <button className="btn-ghost h-9 px-2 py-0 text-xs" onClick={onCancel}>
+          Cancel
+        </button>
+      </div>
+      <p className="mt-1 text-xs text-violet-800">
+        {waitingFor.length
+          ? `Waiting for ${waitingFor.map((x) => `${name(x.id)} (${x.why})`).join(', ')}`
+          : 'All here · plays after the next game'}
+      </p>
+    </li>
+  )
+}
+
 function QueueRow({
   id,
+  fixed,
   position,
   players,
   selected,
@@ -220,6 +297,8 @@ function QueueRow({
   onGripDown,
 }: {
   id: string
+  /** Part of a set game: can't be dragged, swapped or moved. */
+  fixed: boolean
   /** Place in the waiting list (not shown for the next game). */
   position?: number
   players: Map<string, Player>
@@ -241,18 +320,22 @@ function QueueRow({
         selected ? 'bg-sky-100 ring-2 ring-sky-500' : dropTarget ? 'bg-white ring-2 ring-teal-500' : ''
       } ${dragging ? 'opacity-40' : ''}`}
     >
-      <span
-        onPointerDown={onGripDown}
-        role="button"
-        aria-label={`Drag ${p?.name}`}
-        className="flex h-10 w-7 shrink-0 cursor-grab touch-none items-center justify-center text-xl text-slate-400 select-none active:cursor-grabbing"
-      >
-        ⠿
-      </span>
+      {fixed ? (
+        <span className="w-7 shrink-0" />
+      ) : (
+        <span
+          onPointerDown={onGripDown}
+          role="button"
+          aria-label={`Drag ${p?.name}`}
+          className="flex h-10 w-7 shrink-0 cursor-grab touch-none items-center justify-center text-xl text-slate-400 select-none active:cursor-grabbing"
+        >
+          ⠿
+        </span>
+      )}
       {position !== undefined && (
         <span className="w-5 shrink-0 text-right text-sm font-bold text-slate-400 tabular-nums">{position}</span>
       )}
-      <button type="button" onClick={onTap} className="min-w-0 flex-1 text-left">
+      <button type="button" onClick={fixed ? undefined : onTap} className="min-w-0 flex-1 text-left">
         <div className="text-lg leading-tight font-semibold break-words">{p?.name}</div>
         <div className="mt-0.5 flex items-center gap-2 text-xs text-slate-500">
           {p && <PlayerTags player={p} />}
@@ -261,12 +344,16 @@ function QueueRow({
           </span>
         </div>
       </button>
-      <button className="btn-ghost h-9 w-9 p-0" onClick={onUp} disabled={!onUp} aria-label="Move up">
-        ↑
-      </button>
-      <button className="btn-ghost h-9 w-9 p-0" onClick={onDown} disabled={!onDown} aria-label="Move down">
-        ↓
-      </button>
+      {!fixed && (
+        <>
+          <button className="btn-ghost h-9 w-9 p-0" onClick={onUp} disabled={!onUp} aria-label="Move up">
+            ↑
+          </button>
+          <button className="btn-ghost h-9 w-9 p-0" onClick={onDown} disabled={!onDown} aria-label="Move down">
+            ↓
+          </button>
+        </>
+      )}
       <button className="btn-ghost h-9 px-2 py-0 text-xs" onClick={onRest}>
         Rest
       </button>

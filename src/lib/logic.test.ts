@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Session } from '../types'
-import { meetCounts, metPairs, pairKey, partnerCounts, splitTeams, suggestSwap } from './balance'
+import { bumpedPlayers, meetCounts, metPairs, pairKey, partnerCounts, splitTeams, suggestSwap } from './balance'
 import { costSummary, money } from './cost'
 import { parseNames } from './importNames'
 import { planGames } from './plan'
@@ -81,9 +81,14 @@ describe('balance', () => {
     expect(s.repeats).toBe(0)
   })
 
-  it('does not make a lopsided game just to rotate partners', () => {
-    // the only fresh split is a+b vs c+d (diff 6), beyond the slack
+  it('rotates partners even when it makes a less even game', () => {
+    // the only fresh split is a+b vs c+d (diff 6)
     const s = splitTeams(['a', 'b', 'c', 'd'], skillOf, { partners: used('a|d', 'a|c') })
+    expect(pairs(s)).toEqual(['a|b', 'c|d'])
+  })
+
+  it('can still put skill first with a small slack', () => {
+    const s = splitTeams(['a', 'b', 'c', 'd'], skillOf, { partners: used('a|d', 'a|c'), slack: 2 })
     expect(pairs(s)).toEqual(['a|d', 'b|c'])
   })
 
@@ -126,11 +131,41 @@ describe('balance', () => {
     expect(['e', 'f']).toContain(idea!.in)
   })
 
-  it('does not treat a group with only some past meetings as a rematch', () => {
-    // a,b met before; the rest are new to each other
+  it('swaps in someone new when two of the four already played together', () => {
+    // a,b met before; e hasn't played with anyone
     const prev = [{ id: 'g1', court: 1, teamA: ['a', 'x'], teamB: ['b', 'y'], startedAt: 0, shuttles: 0 }] as Session['games']
     expect(metPairs(['a', 'b', 'c', 'd'], meetCounts(prev))).toBe(1)
-    expect(suggestSwap(['a', 'b', 'c', 'd', 'e'], skillOf, { met: meetCounts(prev) })).toBeNull()
+    const idea = suggestSwap(['a', 'b', 'c', 'd', 'e'], skillOf, { met: meetCounts(prev) })
+    expect(idea).toMatchObject({ reason: 'variety', in: 'e' })
+    expect(['a', 'b']).toContain(idea!.out)
+  })
+
+  it('swaps two players when one swap still repeats a partnership', () => {
+    // e,f,g,h have partnered every possible way; one newcomer can't fix it
+    const partners = used('e|f', 'g|h', 'e|g', 'f|h', 'e|h', 'f|g')
+    const idea = suggestSwap(['e', 'f', 'g', 'h', 'a', 'b'], skillOf, { partners })
+    expect(idea).toMatchObject({ reason: 'repeat' })
+    expect(idea!.also).toBeDefined()
+    expect([idea!.in, idea!.also!.in].sort()).toEqual(['a', 'b'])
+    expect(idea!.split.repeats).toBe(0)
+  })
+
+  it('uses a single swap when that is enough', () => {
+    const idea = suggestSwap(['e', 'f', 'g', 'h', 'a', 'b'], skillOf, { partners: used('e|f', 'e|g', 'e|h') })
+    expect(idea!.also).toBeUndefined()
+  })
+
+  it('never moves back a player who was just moved back', () => {
+    const prev = [{ id: 'g1', court: 1, teamA: ['a', 'x'], teamB: ['b', 'y'], startedAt: 0, shuttles: 0 }] as Session['games']
+    const idea = suggestSwap(['a', 'b', 'c', 'd', 'e'], skillOf, { met: meetCounts(prev), locked: new Set(['a', 'b']) })
+    expect(idea).toBeNull()
+  })
+
+  it('tracks who was moved back until they play', () => {
+    const g = (id: string, four: string[], t: number, out?: string) =>
+      ({ id, court: 1, teamA: [four[0], four[1]], teamB: [four[2], four[3]], startedAt: t, shuttles: 0, swap: out ? { in: 'z', out, reason: 'variety' } : undefined }) as Session['games'][number]
+    expect([...bumpedPlayers([g('1', ['a', 'b', 'c', 'z'], 0, 'd')])]).toEqual(['d'])
+    expect([...bumpedPlayers([g('1', ['a', 'b', 'c', 'z'], 0, 'd'), g('2', ['d', 'e', 'f', 'h'], 1)])]).toEqual([])
   })
 
   it('does not suggest a swap for a balanced, fresh game', () => {
@@ -177,6 +212,44 @@ describe('planGames with teams set by hand', () => {
     const fixed = { teamA: ['a', 'b'] as [string, string], teamB: ['c', 'd'] as [string, string] }
     const { games } = planGames(['a', 'b', 'c', 'e', 'd'], skillOf, { fixed }, 1)
     expect(games[0].manual).toBeUndefined()
+  })
+})
+
+describe('planGames with set games', () => {
+  const flat = () => 3
+  const set = { id: 's1', teamA: ['e', 'f'] as [string, string], teamB: ['g', 'h'] as [string, string], createdAt: 0 }
+
+  it('skips held players while some of the set are still busy', () => {
+    // g and h are on court, so e and f wait and the others play.
+    const { games, rest, held } = planGames(['e', 'f', 'a', 'b', 'c', 'd', 'x'], flat, { sets: [set] }, 1)
+    expect([...games[0].teamA, ...games[0].teamB].sort()).toEqual(['a', 'b', 'c', 'd'])
+    expect(rest).toEqual(['x'])
+    expect(held).toEqual(['e', 'f'])
+  })
+
+  it('plays a ready set right after the current next game', () => {
+    const queue = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'x']
+    const { games, held } = planGames(queue, flat, { sets: [set] }, 1)
+    expect([...games[0].teamA, ...games[0].teamB].sort()).toEqual(['a', 'b', 'c', 'd'])
+    expect(held).toEqual(['e', 'f', 'g', 'h'])
+    const two = planGames(queue, flat, { sets: [set] }, 2).games
+    expect(two[1]).toMatchObject({ teamA: ['e', 'f'], teamB: ['g', 'h'], set: 's1' })
+  })
+
+  it('plays the set first once that game has started', () => {
+    const { games, rest } = planGames(['x', 'y', 'z', 'w', 'e', 'f', 'g', 'h'], flat, { sets: [{ ...set, due: true }] }, 1)
+    expect(games[0]).toMatchObject({ set: 's1' })
+    expect(rest).toEqual(['x', 'y', 'z', 'w'])
+  })
+
+  it('plays a ready set first when no one else can make a game', () => {
+    const { games } = planGames(['a', 'e', 'f', 'g', 'h'], flat, { sets: [set] }, 1)
+    expect(games[0]).toMatchObject({ set: 's1' })
+  })
+
+  it('keeps held players in the order so manual moves do not drop them', () => {
+    const { order } = planGames(['e', 'a', 'b', 'c', 'd'], flat, { sets: [set] }, 1)
+    expect(order.sort()).toEqual(['a', 'b', 'c', 'd', 'e'])
   })
 })
 

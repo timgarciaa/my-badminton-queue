@@ -1,4 +1,4 @@
-import type { Game, Pair } from '../types'
+import type { Game, GameSwap, Pair } from '../types'
 
 export interface Split {
   teamA: Pair
@@ -23,7 +23,7 @@ export interface BalanceOptions {
   genderOf?: GenderOf
   /**
    * How much extra skill difference is acceptable to get fresh partners.
-   * 0 = skill always wins; 2 = allow a slightly less even game.
+   * 0 = skill always wins; Infinity (default) = fresh partners always win.
    */
   slack?: number
   /** Players the organizer placed by hand; never swapped automatically. */
@@ -84,21 +84,39 @@ export function metPairs(four: string[], met: Map<string, number>): number {
 /** At or above this many met pairs (of 6) the group counts as a rematch. */
 export const REMATCH_AT = 5
 
+/** Total times the players in a group have already shared a court (0 = all new to each other). */
+export function metTotal(four: string[], met: Map<string, number>): number {
+  return groupPairs(four).reduce((n, k) => n + (met.get(k) ?? 0), 0)
+}
+
+/**
+ * Players moved back by an automatic swap who haven't played since. They are
+ * never moved back twice in a row, so nobody waits more than one extra game.
+ */
+export function bumpedPlayers(games: Game[]): Set<string> {
+  const bumped = new Set<string>()
+  for (const g of [...games].sort((a, b) => a.startedAt - b.startedAt)) {
+    for (const id of [...g.teamA, ...g.teamB]) bumped.delete(id)
+    if (g.swap) bumped.add(g.swap.out)
+    if (g.swap?.also) bumped.add(g.swap.also.out)
+  }
+  return bumped
+}
+
 export function pairKey([x, y]: Pair): string {
   return x < y ? `${x}|${y}` : `${y}|${x}`
 }
 
 /**
  * Split four players into two teams. In order of priority:
- * 1. fresh partners (rotate who plays with whom), as long as the game stays
- *    within `slack` of the most even split,
+ * 1. fresh partners (rotate who plays with whom),
  * 2. even total skill,
  * 3. one male + one female per team.
  */
 export function splitTeams(
   four: string[],
   skillOf: SkillOf,
-  { partners = new Map(), genderOf = () => undefined, slack = 2 }: BalanceOptions = {},
+  { partners = new Map(), genderOf = () => undefined, slack = Infinity }: BalanceOptions = {},
 ): ScoredSplit {
   if (four.length !== 4) throw new Error('splitTeams needs exactly 4 players')
   // A team counts as same-gender only when both genders are known and equal.
@@ -124,25 +142,30 @@ export interface SwapSuggestion {
   in: string
   split: ScoredSplit
   /** Why the next game needs help. */
-  reason: 'rematch' | 'repeat' | 'lopsided'
+  reason: GameSwap['reason']
   /** For 'rematch': the four who would be on court together again. */
   group?: string[]
   /** For 'repeat': the partnership that would happen again. */
   repeatedPair?: Pair
+  /** A second swap, used only when one swap can't avoid a repeat partnership or rematch. */
+  also?: { in: string; out: string }
 }
 
 /**
- * Balance along the way: if the first four in the queue would be a rematch
- * (nearly the same four as an earlier game), repeat a partnership or make a
- * lopsided game, suggest swapping one of them with someone a little further
- * back in the queue (positions 5..lookahead).
+ * Balance along the way: swap one of the first four in the queue with someone
+ * a little further back (positions 5..lookahead) when that lets players meet
+ * people they haven't played with yet. If one swap still leaves a repeated
+ * partnership (or the same four), two players are swapped. In order of priority:
+ * 1. no repeated partnerships,
+ * 2. fewest past meetings within the group (the same four never again),
+ * 3. even total skill (only a very lopsided game triggers a swap by itself).
  */
 export function suggestSwap(
   queue: string[],
   skillOf: SkillOf,
   {
     threshold = 3,
-    lookahead = 6,
+    lookahead = 8,
     locked = new Set(),
     met = new Map(),
     ...opts
@@ -151,38 +174,56 @@ export function suggestSwap(
   if (queue.length < 5) return null
   const four = queue.slice(0, 4)
   const current = splitTeams(four, skillOf, opts)
-  const currentMet = metPairs(four, met)
+  const isRematch = metPairs(four, met) >= REMATCH_AT
+  const lopsided = (s: ScoredSplit) => Math.max(0, s.diff - threshold + 1)
   const cost = (group: string[], s: ScoredSplit) =>
-    s.repeats * 100 +
-    Math.max(0, metPairs(group, met) - REMATCH_AT + 1) * 60 +
-    Math.max(0, s.diff - threshold + 1) * 10 +
-    s.diff
-  const isRematch = currentMet >= REMATCH_AT
-  if (!isRematch && current.repeats === 0 && current.diff < threshold) return null
+    s.repeats * 1000 + (metPairs(group, met) >= REMATCH_AT ? 500 : 0) + metTotal(group, met) * 100 + lopsided(s) * 10 + s.diff
+  if (current.repeats === 0 && metTotal(four, met) === 0 && lopsided(current) === 0) return null
 
   const currentCost = cost(four, current)
+  const candidates = queue.slice(4, lookahead).filter((id) => !locked.has(id))
+  const outs = four.filter((id) => !locked.has(id))
   let best: { cost: number; idea: SwapSuggestion } | null = null
-  for (const candidate of queue.slice(4, lookahead)) {
-    if (locked.has(candidate)) continue
-    for (const out of four) {
-      if (locked.has(out)) continue
-      const trial = four.map((id) => (id === out ? candidate : id))
-      const split = splitTeams(trial, skillOf, opts)
-      const c = cost(trial, split)
-      if (c < currentCost && (!best || c < best.cost)) {
-        best = {
-          cost: c,
-          idea: {
-            out,
-            in: candidate,
-            split,
-            reason: isRematch ? 'rematch' : current.repeats > 0 ? 'repeat' : 'lopsided',
-            repeatedPair: current.repeatedPairs[0],
-            group: isRematch ? four : undefined,
-          },
-        }
-      }
+  const consider = (moves: { in: string; out: string }[]) => {
+    const trial = four.map((id) => moves.find((m) => m.out === id)?.in ?? id)
+    const split = splitTeams(trial, skillOf, opts)
+    const c = cost(trial, split)
+    if (c >= currentCost || (best && c >= best.cost)) return
+    best = {
+      cost: c,
+      idea: {
+        ...moves[0],
+        also: moves[1],
+        split,
+        reason: isRematch
+          ? 'rematch'
+          : current.repeats > 0
+            ? 'repeat'
+            : metTotal(four, met) > metTotal(trial, met)
+              ? 'variety'
+              : 'lopsided',
+        repeatedPair: current.repeatedPairs[0],
+        group: isRematch ? four : undefined,
+      },
     }
   }
-  return best?.idea ?? null
+  for (const c of candidates) for (const out of outs) consider([{ in: c, out }])
+  // Moving two people back is a bigger change, so only to avoid a repeat or rematch.
+  const stuck = (b: typeof best) => {
+    const idea = b?.idea
+    if (!idea) return current.repeats > 0 || isRematch
+    const group = four.map((id) => (id === idea.out ? idea.in : id))
+    return idea.split.repeats > 0 || metPairs(group, met) >= REMATCH_AT
+  }
+  if (stuck(best)) {
+    for (let i = 0; i < candidates.length; i++)
+      for (let j = i + 1; j < candidates.length; j++)
+        for (let x = 0; x < outs.length; x++)
+          for (let y = x + 1; y < outs.length; y++)
+            consider([
+              { in: candidates[i], out: outs[x] },
+              { in: candidates[j], out: outs[y] },
+            ])
+  }
+  return (best as { idea: SwapSuggestion } | null)?.idea ?? null
 }

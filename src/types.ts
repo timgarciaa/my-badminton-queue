@@ -39,7 +39,9 @@ export interface GameSwap {
   in: string
   /** Player who was next up and now waits for the following game. */
   out: string
-  reason: 'rematch' | 'repeat' | 'lopsided'
+  reason: 'rematch' | 'repeat' | 'variety' | 'lopsided'
+  /** A second player swapped in, when one swap couldn't avoid a repeat partnership. */
+  also?: { in: string; out: string }
 }
 
 export interface Game {
@@ -56,6 +58,24 @@ export interface Game {
   swap?: GameSwap
   /** Winning team; missing if not recorded. */
   winner?: 'A' | 'B'
+  /** Started from a set game (four players who asked to play together). */
+  set?: boolean
+}
+
+/**
+ * Four players who asked to play together, with their teams. They are held
+ * out of other games until all four are free, then play next.
+ */
+export interface SetGame {
+  id: string
+  teamA: Pair
+  teamB: Pair
+  createdAt: number
+  /**
+   * The game that was next when this set became ready has started, so the
+   * set plays next. Until then it waits behind that game.
+   */
+  due?: boolean
 }
 
 export interface Session {
@@ -75,5 +95,7 @@ export interface Session {
   locked?: string[]
   /** Teams for the next game set by hand; used while they are still the first four in the queue. */
   nextTeams?: { teamA: Pair; teamB: Pair }
+  /** Set games waiting to be played, oldest first. */
+  setGames?: SetGame[]
   status: 'open' | 'closed'
 }

@@ -1,6 +1,6 @@
-import type { GameSwap, Pair } from '../types'
+import type { GameSwap, Pair, SetGame } from '../types'
 import { groupPairs, pairKey, splitTeams, suggestSwap, type BalanceOptions } from './balance'
-import { swap } from './queue'
+import { applySwap } from './queue'
 
 export interface PlannedGame {
   teamA: Pair
@@ -9,7 +9,17 @@ export interface PlannedGame {
   swap?: GameSwap
   /** Teams were set by hand. */
   manual?: boolean
+  /** Id of the set game this is. */
+  set?: string
 }
+
+export const setIds = (g: Pick<SetGame, 'teamA' | 'teamB'>) => [...g.teamA, ...g.teamB]
+
+/** Players held for set games, which skip normal games until their set plays. */
+export const heldIds = (sets: SetGame[] = []) => new Set(sets.flatMap(setIds))
+
+/** A set game is ready once all four of its players are waiting in the queue. */
+export const isSetReady = (set: SetGame, queue: string[]) => setIds(set).every((id) => queue.includes(id))
 
 /** True when the fixed teams are exactly the first four players in the queue. */
 export function isFirstFour(queue: string[], fixed: { teamA: Pair; teamB: Pair }): boolean {
@@ -22,6 +32,10 @@ export function isFirstFour(queue: string[], fixed: { teamA: Pair; teamB: Pair }
  * Preview the next games from the queue, exactly as "Next game" would start
  * them (including automatic swaps). Later games assume the earlier ones go
  * ahead as planned, so they are a forecast.
+ *
+ * Set games play once all four players are waiting: right after the game that
+ * was next when they became ready (or first, if that game has started). Until
+ * then their players are skipped, so the rest of the queue keeps moving.
  */
 export function planGames(
   queue: string[],
@@ -31,41 +45,64 @@ export function planGames(
     met = new Map(),
     autoSwap = true,
     fixed,
+    sets = [],
     ...opts
   }: BalanceOptions & {
     autoSwap?: boolean
+    /** Set games waiting to be played, oldest first. */
+    sets?: SetGame[]
     /** Teams set by hand for the next game; used if they are the first four in the queue. */
     fixed?: { teamA: Pair; teamB: Pair }
   } = {},
   max = 3,
-): { games: PlannedGame[]; rest: string[]; order: string[] } {
-  let q = [...queue]
+): { games: PlannedGame[]; rest: string[]; order: string[]; held: string[] } {
+  const held = heldIds(sets)
+  let q = queue.filter((id) => !held.has(id))
   const counts = new Map(partners)
   const meets = new Map(met)
   const games: PlannedGame[] = []
-  if (fixed && isFirstFour(q, fixed) && max > 0) {
-    const ids = [...fixed.teamA, ...fixed.teamB]
-    const total = (t: Pair) => skillOf(t[0]) + skillOf(t[1])
-    games.push({ teamA: fixed.teamA, teamB: fixed.teamB, diff: Math.abs(total(fixed.teamA) - total(fixed.teamB)), manual: true })
-    for (const team of [fixed.teamA, fixed.teamB]) counts.set(pairKey(team), (counts.get(pairKey(team)) ?? 0) + 1)
+  const total = (t: Pair) => skillOf(t[0]) + skillOf(t[1])
+  const count = (ids: string[], teams: Pair[]) => {
+    for (const team of teams) counts.set(pairKey(team), (counts.get(pairKey(team)) ?? 0) + 1)
     for (const key of groupPairs(ids)) meets.set(key, (meets.get(key) ?? 0) + 1)
+  }
+  const setsPlanned = new Set<string>()
+  const addSets = (dueOnly: boolean) => {
+    for (const set of sets) {
+      if (games.length >= max || setsPlanned.has(set.id) || (dueOnly && !set.due) || !isSetReady(set, queue)) continue
+      games.push({ teamA: set.teamA, teamB: set.teamB, diff: Math.abs(total(set.teamA) - total(set.teamB)), manual: true, set: set.id })
+      count(setIds(set), [set.teamA, set.teamB])
+      setsPlanned.add(set.id)
+    }
+  }
+  addSets(true)
+  if (fixed && isFirstFour(q, fixed) && games.length < max) {
+    const ids = [...fixed.teamA, ...fixed.teamB]
+    games.push({ teamA: fixed.teamA, teamB: fixed.teamB, diff: Math.abs(total(fixed.teamA) - total(fixed.teamB)), manual: true })
+    count(ids, [fixed.teamA, fixed.teamB])
     q = q.filter((id) => !ids.includes(id))
+    addSets(false)
   }
   while (q.length >= 4 && games.length < max) {
     const idea = autoSwap ? suggestSwap(q, skillOf, { ...opts, partners: counts, met: meets }) : null
-    if (idea) q = swap(q, idea.out, idea.in)
+    if (idea) q = applySwap(q, idea)
     const split = splitTeams(q.slice(0, 4), skillOf, { ...opts, partners: counts })
     games.push({
       teamA: split.teamA,
       teamB: split.teamB,
       diff: split.diff,
-      swap: idea ? { in: idea.in, out: idea.out, reason: idea.reason } : undefined,
+      swap: idea ? { in: idea.in, out: idea.out, reason: idea.reason, ...(idea.also && { also: idea.also }) } : undefined,
     })
-    for (const team of [split.teamA, split.teamB]) counts.set(pairKey(team), (counts.get(pairKey(team)) ?? 0) + 1)
-    for (const key of groupPairs(q.slice(0, 4))) meets.set(key, (meets.get(key) ?? 0) + 1)
+    count(q.slice(0, 4), [split.teamA, split.teamB])
     q = q.slice(4)
+    addSets(false)
   }
-  // The queue in the order shown: each game's team A, team B, then the rest.
-  const order = [...games.flatMap((g) => [...g.teamA, ...g.teamB]), ...q]
-  return { games, rest: q, order }
+  // Not enough other players for a game first: ready sets go now.
+  addSets(false)
+  // Held players still waiting for the rest of their set.
+  const planned = new Set(games.flatMap(setIds))
+  const waitingHeld = queue.filter((id) => held.has(id) && !planned.has(id))
+  // The queue in the order shown: each game's team A, team B, the rest, then held players.
+  const order = [...games.flatMap(setIds), ...q, ...waitingHeld]
+  return { games, rest: q, order, held: waitingHeld }
 }

@@ -1,8 +1,8 @@
 import { useState } from 'react'
-import { allSplits, meetCounts, partnerCounts } from '../lib/balance'
+import { allSplits, bumpedPlayers, meetCounts, partnerCounts } from '../lib/balance'
 import { planGames } from '../lib/plan'
 import { QueuePanel } from '../components/QueuePanel'
-import { nextFour } from '../lib/queue'
+import { SetGameDialog } from '../components/SetGameDialog'
 import { PlayerTags, Stepper, elapsed, useNow } from '../components/ui'
 import { gameNumber } from '../lib/stats'
 import { usePlayerMap, useStore } from '../store/useStore'
@@ -11,6 +11,7 @@ import type { Game, GameSwap, Pair, Player, Session } from '../types'
 const SWAP_REASON_SHORT: Record<GameSwap['reason'], string> = {
   rematch: ' · avoids a rematch',
   repeat: ' · fresh partners',
+  variety: ' · new people',
   lopsided: ' · more even game',
 }
 
@@ -25,7 +26,9 @@ function planNext(session: Session, players: Map<string, Player>) {
       met: meetCounts(session.games),
       genderOf: (id) => players.get(id)?.gender,
       autoSwap: !session.locked?.length,
+      locked: bumpedPlayers(session.games),
       fixed: session.nextTeams,
+      sets: session.setGames,
     },
     1,
   )
@@ -35,8 +38,8 @@ export function SessionPage({ onGoToCheckIn }: { onGoToCheckIn: () => void }) {
   const session = useStore((s) => s.session)
   const setCourtCount = useStore((s) => s.setCourtCount)
   const players = usePlayerMap()
+  const [setting, setSetting] = useState(false)
 
-  const four = nextFour(session.queue)
   const plan = planNext(session, players)
 
   return (
@@ -56,7 +59,7 @@ export function SessionPage({ onGoToCheckIn }: { onGoToCheckIn: () => void }) {
               number={i + 1}
               game={session.games.find((g) => g.id === gameId)}
               gameNo={gameId ? gameNumber(session.games, session.games.find((g) => g.id === gameId)!) : 0}
-              canStart={!!four}
+              canStart={plan.games.length > 0}
               players={players}
             />
           ))}
@@ -64,9 +67,17 @@ export function SessionPage({ onGoToCheckIn }: { onGoToCheckIn: () => void }) {
       </section>
 
       <aside className="flex w-[22rem] shrink-0 flex-col gap-3">
-        <h2 className="text-xl font-bold">
-          Queue <span className="text-base font-medium text-slate-500">({session.queue.length} waiting)</span>
-        </h2>
+        <div className="flex items-center justify-between gap-2">
+          <h2 className="text-xl font-bold">
+            Queue <span className="text-base font-medium text-slate-500">({session.queue.length} waiting)</span>
+          </h2>
+          {session.attendees.length >= 4 && (
+            <button className="btn-ghost h-10 px-3 py-0 text-sm whitespace-nowrap" onClick={() => setSetting(true)}>
+              Set a game
+            </button>
+          )}
+        </div>
+        {setting && <SetGameDialog players={players} onClose={() => setSetting(false)} />}
         <QueuePanel players={players} plan={plan} onGoToCheckIn={onGoToCheckIn} />
       </aside>
     </div>
@@ -103,7 +114,7 @@ function CourtCard({
   const start = () => {
     // Same plan the queue previews, including any automatic swap or manual teams.
     const [next] = planNext(useStore.getState().session, players).games
-    if (next) startGame(number, next.teamA, next.teamB, next.swap)
+    if (next) startGame(number, next.teamA, next.teamB, next.swap, next.set)
   }
 
   // Cycle to the next of the 3 possible pairings for these four players.
@@ -129,7 +140,7 @@ function CourtCard({
         <button className="btn-primary px-8 py-4 text-lg" disabled={!canStart} onClick={start}>
           Next game
         </button>
-        {!canStart && <p className="text-sm text-slate-500">Need 4 players in the queue</p>}
+        {!canStart && <p className="text-sm text-slate-500">Need 4 free players in the queue</p>}
       </div>
     )
   }
@@ -146,6 +157,9 @@ function CourtCard({
         </span>
         <span className="tabular-nums opacity-90">{elapsed(game.startedAt, now)}</span>
       </div>
+      {game.set && (
+        <p className="px-4 pt-1.5 text-xs font-bold tracking-wide text-violet-100 uppercase">Set game</p>
+      )}
       <div className="flex flex-1 flex-col justify-center gap-2 px-4 py-3">
         <Team pair={game.teamA} players={players} total={total(game.teamA)} />
         <div className="flex items-center gap-2 text-xs font-bold opacity-70">
@@ -156,6 +170,12 @@ function CourtCard({
           <p className="rounded-lg bg-white/10 px-3 py-1.5 text-xs leading-snug">
             <strong>{players.get(game.swap.in)?.name}</strong> swapped in for{' '}
             <strong>{players.get(game.swap.out)?.name}</strong>
+            {game.swap.also && (
+              <>
+                , <strong>{players.get(game.swap.also.in)?.name}</strong> for{' '}
+                <strong>{players.get(game.swap.also.out)?.name}</strong>
+              </>
+            )}
             {SWAP_REASON_SHORT[game.swap.reason]}
           </p>
         )}

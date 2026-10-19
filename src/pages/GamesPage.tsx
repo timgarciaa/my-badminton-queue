@@ -143,6 +143,7 @@ function GameRow({
         {game.swap && (
           <div className="text-sky-700">
             {players.get(game.swap.in)?.name} in for {players.get(game.swap.out)?.name}
+            {game.swap.also && `, ${players.get(game.swap.also.in)?.name} for ${players.get(game.swap.also.out)?.name}`}
           </div>
         )}
       </div>

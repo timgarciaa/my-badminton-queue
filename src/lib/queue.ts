@@ -30,3 +30,9 @@ export function move(queue: string[], id: string, delta: number): string[] {
 export function swap(queue: string[], outId: string, inId: string): string[] {
   return queue.map((id) => (id === outId ? inId : id === inId ? outId : id))
 }
+
+/** Apply an automatic swap (one or two players) to the queue. */
+export function applySwap(queue: string[], s: { in: string; out: string; also?: { in: string; out: string } }): string[] {
+  const once = swap(queue, s.out, s.in)
+  return s.also ? swap(once, s.also.out, s.also.in) : once
+}
