@@ -21,6 +21,39 @@ export const heldIds = (sets: SetGame[] = []) => new Set(sets.flatMap(setIds))
 /** A set game is ready once all four of its players are waiting in the queue. */
 export const isSetReady = (set: SetGame, queue: string[]) => setIds(set).every((id) => queue.includes(id))
 
+/**
+ * Winners stay: the next game for the winners and the next two waiting players.
+ * Split up, each winner partners one of the two, picking the pairing with fewer
+ * repeat partners, then the more even game. Together, the winners keep their
+ * team and the two waiting players challenge them. Null when fewer than two
+ * players are waiting.
+ */
+export function winnersStayGame(
+  winners: Pair,
+  waiting: string[],
+  skillOf: (id: string) => number,
+  partners: Map<string, number> = new Map(),
+  split = true,
+): { teamA: Pair; teamB: Pair } | null {
+  if (waiting.length < 2) return null
+  const [w1, w2] = winners
+  const [a, b] = waiting
+  if (!split) return { teamA: winners, teamB: [a, b] }
+  const total = (t: Pair) => skillOf(t[0]) + skillOf(t[1])
+  const cost = ([x, y]: [Pair, Pair]) =>
+    ((partners.get(pairKey(x)) ?? 0) + (partners.get(pairKey(y)) ?? 0)) * 100 + Math.abs(total(x) - total(y))
+  const together: [Pair, Pair] = [
+    [w1, a],
+    [w2, b],
+  ]
+  const crossed: [Pair, Pair] = [
+    [w1, b],
+    [w2, a],
+  ]
+  const [teamA, teamB] = cost(crossed) < cost(together) ? crossed : together
+  return { teamA, teamB }
+}
+
 /** True when the fixed teams are exactly the first four players in the queue. */
 export function isFirstFour(queue: string[], fixed: { teamA: Pair; teamB: Pair }): boolean {
   const ids = [...fixed.teamA, ...fixed.teamB]

@@ -5,7 +5,7 @@ import type { Player } from '../types'
 
 type Status = 'queue' | 'court' | 'resting'
 type Filter = 'all' | Status
-type Sort = 'name' | 'arrival'
+type Sort = 'first' | 'latest' | 'name'
 
 /** How long a tapped tile animates before the player moves to Checked in. */
 const CONFIRM_MS = 350
@@ -30,7 +30,8 @@ export function CheckInPage({ onGoToPlayers }: { onGoToPlayers: () => void }) {
   const checkOut = useStore((s) => s.checkOut)
   const [query, setQuery] = useState('')
   const [filter, setFilter] = useState<Filter>('all')
-  const [sort, setSort] = useState<Sort>('name')
+  // Check-in order by default, first to arrive at the top.
+  const [sort, setSort] = useState<Sort>('first')
   // Tiles playing their confirm animation, and cards to highlight after.
   const [leaving, setLeaving] = useState<Set<string>>(new Set())
   const [recent, setRecent] = useState<Set<string>>(new Set())
@@ -64,9 +65,11 @@ export function CheckInPage({ onGoToPlayers }: { onGoToPlayers: () => void }) {
   const here = present
     .filter(matches)
     .filter((p) => filter === 'all' || statusOf(p) === filter)
-    .sort((a, b) =>
-      sort === 'arrival' ? attendees.get(b.id)!.checkedInAt - attendees.get(a.id)!.checkedInAt : byName(a, b),
-    )
+    .sort((a, b) => {
+      if (sort === 'name') return byName(a, b)
+      const diff = attendees.get(a.id)!.checkedInAt - attendees.get(b.id)!.checkedInAt
+      return sort === 'first' ? diff : -diff
+    })
   const count = (st: Status) => present.filter((p) => statusOf(p) === st).length
   const males = present.filter((p) => p.gender === 'M').length
   const females = present.filter((p) => p.gender === 'F').length
@@ -125,7 +128,7 @@ export function CheckInPage({ onGoToPlayers }: { onGoToPlayers: () => void }) {
         {notHere.length === 0 ? (
           <p className="text-slate-500">{query ? 'No one matches.' : 'Everyone is checked in.'}</p>
         ) : (
-          <div className="grid grid-cols-[repeat(auto-fill,minmax(11.5rem,1fr))] gap-2.5">
+          <div className="grid grid-cols-[repeat(auto-fill,minmax(12.5rem,1fr))] gap-2.5">
             {notHere.map((p) => {
               const going = leaving.has(p.id)
               return (
@@ -140,7 +143,7 @@ export function CheckInPage({ onGoToPlayers }: { onGoToPlayers: () => void }) {
                 >
                   <Initials player={p} muted={!going} size="w-10" />
                   <span className="min-w-0 flex-1 space-y-1">
-                    <span className="block text-lg leading-tight font-semibold break-words text-slate-800">{p.name}</span>
+                    <span className="block text-lg leading-tight font-semibold text-slate-800">{p.name}</span>
                     <PlayerTags player={p} />
                   </span>
                   <span
@@ -185,8 +188,9 @@ export function CheckInPage({ onGoToPlayers }: { onGoToPlayers: () => void }) {
           <div role="tablist" className="d-tabs d-tabs-box d-tabs-sm ml-auto">
             {(
               [
+                ['first', 'First in'],
+                ['latest', 'Latest in'],
                 ['name', 'A–Z'],
-                ['arrival', 'Latest first'],
               ] as const
             ).map(([id, label]) => (
               <button
@@ -203,7 +207,8 @@ export function CheckInPage({ onGoToPlayers }: { onGoToPlayers: () => void }) {
         {here.length === 0 ? (
           <p className="text-slate-500">{query || filter !== 'all' ? 'No one matches.' : 'Nobody yet.'}</p>
         ) : (
-          <div className="grid grid-cols-[repeat(auto-fill,minmax(16rem,1fr))] gap-2.5">
+          // Every card is one size: rows share a height and text stays on one line each.
+          <div className="grid auto-rows-fr grid-cols-[repeat(auto-fill,minmax(16rem,1fr))] gap-2.5">
             {here.map((p) => {
               const a = attendees.get(p.id)!
               const st = statusOf(p)
@@ -212,17 +217,19 @@ export function CheckInPage({ onGoToPlayers }: { onGoToPlayers: () => void }) {
               return (
                 <div
                   key={p.id}
-                  className={`d-card d-card-border flex-row items-center gap-3 bg-emerald-50 px-3 py-2.5 ${
+                  className={`d-card d-card-border relative flex-row items-center gap-3 bg-emerald-50 px-3 py-2.5 ${
                     isNew ? 'border-emerald-400 motion-safe:animate-just-in' : 'border-emerald-200'
                   }`}
                 >
                   <Initials player={p} size="w-10" />
                   <div className="min-w-0 flex-1">
-                    <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
-                      <span className="text-lg leading-tight font-semibold break-words">{p.name}</span>
+                    <div className="flex min-w-0 items-center gap-2 pr-6">
+                      <span className="truncate text-lg leading-tight font-semibold" title={p.name}>
+                        {p.name}
+                      </span>
                       <PlayerTags player={p} />
                     </div>
-                    <div className="mt-0.5 flex flex-wrap items-center gap-x-1.5 text-xs text-slate-500 tabular-nums">
+                    <div className="mt-0.5 flex items-center gap-x-1.5 overflow-hidden text-xs whitespace-nowrap text-slate-500 tabular-nums">
                       {isNew ? (
                         <span className="font-bold text-emerald-700">Just checked in</span>
                       ) : (
@@ -246,7 +253,7 @@ export function CheckInPage({ onGoToPlayers }: { onGoToPlayers: () => void }) {
                   </div>
                   {canCheckOut && (
                     <button
-                      className="d-btn d-btn-ghost d-btn-sm d-btn-square text-slate-400"
+                      className="d-btn d-btn-ghost d-btn-xs d-btn-square absolute top-1.5 right-1.5 text-slate-400"
                       aria-label={`Check out ${p.name}`}
                       title="Check out"
                       onClick={() => confirm(`Check out ${p.name}? They will be removed from the queue.`) && checkOut(p.id)}

@@ -3,7 +3,7 @@ import type { Session } from '../types'
 import { bumpedPlayers, meetCounts, metPairs, pairKey, partnerCounts, splitTeams, suggestSwap } from './balance'
 import { costSummary, money } from './cost'
 import { parseNames } from './importNames'
-import { planGames } from './plan'
+import { planGames, winnersStayGame } from './plan'
 import { playerRecords, winRate } from './stats'
 import { dequeue, enqueue, move, nextFour, pushFront, swap } from './queue'
 
@@ -250,6 +250,40 @@ describe('planGames with set games', () => {
   it('keeps held players in the order so manual moves do not drop them', () => {
     const { order } = planGames(['e', 'a', 'b', 'c', 'd'], flat, { sets: [set] }, 1)
     expect(order.sort()).toEqual(['a', 'b', 'c', 'd', 'e'])
+  })
+})
+
+describe('winnersStayGame', () => {
+  const skill: Record<string, number> = { w1: 5, w2: 1, a: 4, b: 2 }
+  const skillOf = (id: string) => skill[id] ?? 3
+
+  it('splits the winners, each with one of the next two waiting', () => {
+    const g = winnersStayGame(['w1', 'w2'], ['a', 'b', 'c'], skillOf)!
+    expect([g.teamA, g.teamB].map((t) => t.filter((id) => id.startsWith('w')).length)).toEqual([1, 1])
+    expect([...g.teamA, ...g.teamB].sort()).toEqual(['a', 'b', 'w1', 'w2'])
+  })
+
+  it('picks the more even pairing', () => {
+    // w1+b (7) vs w2+a (5) beats w1+a (9) vs w2+b (3).
+    const g = winnersStayGame(['w1', 'w2'], ['a', 'b'], skillOf)!
+    expect(g.teamA).toEqual(['w1', 'b'])
+    expect(g.teamB).toEqual(['w2', 'a'])
+  })
+
+  it('avoids repeat partners before evening skill', () => {
+    const partners = new Map([[pairKey(['w1', 'b']), 1]])
+    const g = winnersStayGame(['w1', 'w2'], ['a', 'b'], skillOf, partners)!
+    expect(g.teamA).toEqual(['w1', 'a'])
+  })
+
+  it('needs two waiting players', () => {
+    expect(winnersStayGame(['w1', 'w2'], ['a'], skillOf)).toBeNull()
+  })
+
+  it('keeps the winners together against the next two when not splitting', () => {
+    const g = winnersStayGame(['w1', 'w2'], ['a', 'b', 'c'], skillOf, new Map(), false)!
+    expect(g.teamA).toEqual(['w1', 'w2'])
+    expect(g.teamB).toEqual(['a', 'b'])
   })
 })
 

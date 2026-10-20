@@ -2,7 +2,7 @@
 /* daisyUI parts we use, prefixed with d- (d-card, d-btn, ...). */
 @plugin 'daisyui' {
   prefix: 'd-';
-  include: countdown, card, badge, button, avatar, select, tab, join, stat, progress, checkbox, table, toast, alert, modal;
+  include: countdown, card, badge, button, avatar, select, tab, join, stat, progress, checkbox, table, toast, alert, modal, toggle;
   themes: false;
   logs: false;
 }

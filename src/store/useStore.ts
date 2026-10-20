@@ -41,6 +41,69 @@ export function newSession(
   }
 }
 
+/** Whether a court plays winners stay. Ignores the on/off value an early test build saved. */
+export const isWinnersStay = (s: Session, court: number) => Array.isArray(s.winnersStay) && s.winnersStay.includes(court)
+/** Whether a winners-stay court keeps its winners together instead of splitting them up. */
+export const isWinnersTogether = (s: Session, court: number) => !!s.winnersTogether?.includes(court)
+
+/** Add or remove a court number in a list of courts. */
+const withCourt = (list: unknown, court: number, on: boolean) => {
+  const rest = (Array.isArray(list) ? (list as number[]) : []).filter((c) => c !== court)
+  return on ? [...rest, court].sort((a, b) => a - b) : rest
+}
+
+/** Start a game on a court, taking its players out of the queue. Unchanged if the court is busy. */
+function beginGame(
+  s: Session,
+  court: number,
+  teamA: Pair,
+  teamB: Pair,
+  { swap: gameSwap, setId, stayed, shuttleType }: { swap?: GameSwap; setId?: string; stayed?: Pair; shuttleType?: string } = {},
+): Session {
+  if (s.courts[court - 1]) return s
+  const number = Math.max(0, ...s.games.map((g, i) => g.number ?? i + 1)) + 1
+  // Shuttles are reused, but a court's first game needs a new one.
+  const firstOnCourt = !s.games.some((g) => g.court === court)
+  const game: Game = { id: uid(), number, court, teamA, teamB, startedAt: Date.now(), shuttles: firstOnCourt ? 1 : 0 }
+  const type = shuttleType ?? s.shuttleTypeId
+  if (type) game.shuttleType = type
+  if (gameSwap) game.swap = gameSwap
+  if (setId) game.set = true
+  if (stayed) game.stayed = stayed
+  const ids = [...teamA, ...teamB]
+  // The swapped-out player takes the swapped-in player's place in line.
+  const queue = gameSwap ? applySwap(s.queue, gameSwap) : s.queue
+  // Ready sets were waiting behind this game; they play next.
+  const setGames = s.setGames
+    ?.filter((g) => g.id !== setId)
+    .map((g) => (!setId && isSetReady(g, queue) ? { ...g, due: true } : g))
+  return {
+    ...s,
+    games: [...s.games, game],
+    courts: s.courts.map((g, i) => (i === court - 1 ? game.id : g)),
+    queue: dequeue(queue, ids),
+    setGames,
+    // Manual queue changes only hold until the next game starts
+    // (a set game doesn't use them, so they carry over).
+    ...(setId ? {} : { locked: [], nextTeams: undefined }),
+  }
+}
+
+/** End a game: record the winner, count the game, and send players (except `keep`) to the queue. */
+function finishGame(s: Session, gameId: string, winner?: 'A' | 'B', keep: string[] = []): Session {
+  const game = s.games.find((g) => g.id === gameId)
+  if (!game || game.endedAt) return s
+  const ids = [...game.teamA, ...game.teamB]
+  const back = ids.filter((id) => !keep.includes(id) && s.attendees.some((a) => a.playerId === id && !a.resting))
+  return {
+    ...s,
+    games: s.games.map((g) => (g.id === gameId ? { ...g, endedAt: Date.now(), winner } : g)),
+    courts: s.courts.map((c) => (c === gameId ? null : c)),
+    attendees: s.attendees.map((a) => (ids.includes(a.playerId) ? { ...a, gamesPlayed: a.gamesPlayed + 1 } : a)),
+    queue: enqueue(s.queue, back),
+  }
+}
+
 interface State {
   players: Player[]
   session: Session
@@ -91,6 +154,15 @@ interface State {
   startGame: (court: number, teamA: Pair, teamB: Pair, swap?: GameSwap, setId?: string) => void
   addShuttle: (gameId: string, delta: number) => void
   endGame: (gameId: string, winner?: 'A' | 'B') => void
+  /**
+   * Winners stay: end the game, send the losers to the queue, and start the
+   * next game on the same court with the winners split up (teamA/teamB).
+   */
+  rotateWinners: (gameId: string, winner: 'A' | 'B', teamA: Pair, teamB: Pair) => void
+  /** Turn winners stay on or off for one court. */
+  setWinnersStay: (court: number, on: boolean) => void
+  /** On a winners-stay court, split the winners up (default) or keep them together. */
+  setWinnersSplit: (court: number, split: boolean) => void
   /** Set or clear the winner of a finished game, in this session or history. */
   setWinner: (gameId: string, winner?: 'A' | 'B') => void
   cancelGame: (gameId: string) => void
@@ -263,33 +335,7 @@ export const useStore = create<State>()(
         removeSetGame: (id) => updateSession((s) => ({ ...s, setGames: s.setGames?.filter((g) => g.id !== id) })),
 
         startGame: (court, teamA, teamB, gameSwap, setId) =>
-          updateSession((s) => {
-            if (s.courts[court - 1]) return s
-            const number = Math.max(0, ...s.games.map((g, i) => g.number ?? i + 1)) + 1
-            // Shuttles are reused, but a court's first game needs a new one.
-            const firstOnCourt = !s.games.some((g) => g.court === court)
-            const game: Game = { id: uid(), number, court, teamA, teamB, startedAt: Date.now(), shuttles: firstOnCourt ? 1 : 0 }
-            if (s.shuttleTypeId) game.shuttleType = s.shuttleTypeId
-            if (gameSwap) game.swap = gameSwap
-            if (setId) game.set = true
-            const ids = [...teamA, ...teamB]
-            // The swapped-out player takes the swapped-in player's place in line.
-            const queue = gameSwap ? applySwap(s.queue, gameSwap) : s.queue
-            // Ready sets were waiting behind this game; they play next.
-            const setGames = s.setGames
-              ?.filter((g) => g.id !== setId)
-              .map((g) => (!setId && isSetReady(g, queue) ? { ...g, due: true } : g))
-            return {
-              ...s,
-              games: [...s.games, game],
-              courts: s.courts.map((g, i) => (i === court - 1 ? game.id : g)),
-              queue: dequeue(queue, ids),
-              setGames,
-              // Manual queue changes only hold until the next game starts
-              // (a set game doesn't use them, so they carry over).
-              ...(setId ? {} : { locked: [], nextTeams: undefined }),
-            }
-          }),
+          updateSession((s) => beginGame(s, court, teamA, teamB, { swap: gameSwap, setId })),
 
         addShuttle: (gameId, delta) =>
           updateSession((s) => ({
@@ -297,22 +343,22 @@ export const useStore = create<State>()(
             games: s.games.map((g) => (g.id === gameId ? { ...g, shuttles: Math.max(0, g.shuttles + delta) } : g)),
           })),
 
-        endGame: (gameId, winner) =>
+        endGame: (gameId, winner) => updateSession((s) => finishGame(s, gameId, winner)),
+
+        rotateWinners: (gameId, winner, teamA, teamB) =>
           updateSession((s) => {
             const game = s.games.find((g) => g.id === gameId)
             if (!game || game.endedAt) return s
-            const ids = [...game.teamA, ...game.teamB]
-            const back = ids.filter((id) => s.attendees.some((a) => a.playerId === id && !a.resting))
-            return {
-              ...s,
-              games: s.games.map((g) => (g.id === gameId ? { ...g, endedAt: Date.now(), winner } : g)),
-              courts: s.courts.map((c) => (c === gameId ? null : c)),
-              attendees: s.attendees.map((a) =>
-                ids.includes(a.playerId) ? { ...a, gamesPlayed: a.gamesPlayed + 1 } : a,
-              ),
-              queue: enqueue(s.queue, back),
-            }
+            const winners = winner === 'A' ? game.teamA : game.teamB
+            const ended = finishGame(s, gameId, winner, winners)
+            const next = beginGame(ended, game.court, teamA, teamB, { stayed: winners, shuttleType: game.shuttleType })
+            // Couldn't start (e.g. a player left): winners go back in line instead.
+            return next === ended ? { ...ended, queue: enqueue(ended.queue, winners) } : next
           }),
+
+        setWinnersStay: (court, on) => updateSession((s) => ({ ...s, winnersStay: withCourt(s.winnersStay, court, on) })),
+        setWinnersSplit: (court, split) =>
+          updateSession((s) => ({ ...s, winnersTogether: withCourt(s.winnersTogether, court, !split) })),
 
         setWinner: (gameId, winner) =>
           set((st) => {

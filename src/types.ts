@@ -71,6 +71,8 @@ export interface Game {
   winner?: 'A' | 'B'
   /** Started from a set game (four players who asked to play together). */
   set?: boolean
+  /** Winners of the previous game on this court, who stayed on and split up. */
+  stayed?: Pair
 }
 
 /**
@@ -100,6 +102,14 @@ export interface Session {
   extraShuttles: number
   /** Shuttle types with their prices. Missing on older sessions, which use shuttlePrice. */
   shuttleTypes?: ShuttleType[]
+  /**
+   * Courts playing winners stay: after a game with a winner, the losers go to
+   * the queue and the two winners stay on, split up, each with a player from
+   * the queue.
+   */
+  winnersStay?: number[]
+  /** Winners-stay courts where the winners stay together as a team (beat the winners) instead of splitting up. */
+  winnersTogether?: number[]
   /** Default shuttle type; new games start with it. */
   shuttleTypeId?: string
   attendees: Attendee[]

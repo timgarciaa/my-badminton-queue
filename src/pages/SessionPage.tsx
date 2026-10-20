@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
 import { allSplits, bumpedPlayers, meetCounts, partnerCounts } from '../lib/balance'
-import { planGames } from '../lib/plan'
+import { planGames, winnersStayGame } from '../lib/plan'
 import { QueuePanel } from '../components/QueuePanel'
 import { SetGameDialog } from '../components/SetGameDialog'
 import { PlayerTags, Stepper, elapsed, useNow } from '../components/ui'
 import { gameNumber } from '../lib/stats'
-import { usePlayerMap, useStore } from '../store/useStore'
+import { isWinnersStay, isWinnersTogether, usePlayerMap, useStore } from '../store/useStore'
 import type { Game, GameSwap, Pair, Player, Session } from '../types'
 
 const SWAP_REASON_SHORT: Record<GameSwap['reason'], string> = {
@@ -160,6 +160,9 @@ function CourtCard({
 }) {
   const startGame = useStore((s) => s.startGame)
   const endGame = useStore((s) => s.endGame)
+  const rotateWinners = useStore((s) => s.rotateWinners)
+  const winnersStay = useStore((s) => isWinnersStay(s.session, number))
+  const together = useStore((s) => isWinnersTogether(s.session, number))
   const cancelGame = useStore((s) => s.cancelGame)
   const addShuttle = useStore((s) => s.addShuttle)
   const now = useNow()
@@ -170,8 +173,20 @@ function CourtCard({
   const teamName = (t: Pair) => t.map((id) => players.get(id)?.name ?? '?').join(' & ')
 
   const finish = (winner?: 'A' | 'B') => {
-    if (game) endGame(game.id, winner)
     setAskWinner(false)
+    if (!game) return
+    const s = useStore.getState().session
+    if (winner && isWinnersStay(s, game.court)) {
+      // Winners stay on, split up, each with one of the next two in line.
+      const winners = winner === 'A' ? game.teamA : game.teamB
+      const resting = winners.some((id) => s.attendees.find((a) => a.playerId === id)?.resting)
+      const plan = planNext(s, players)
+      const waiting = plan.order.filter((id) => !plan.held.includes(id))
+      const split = !isWinnersTogether(s, game.court)
+      const next = !resting && winnersStayGame(winners, waiting, skillOf, partnerCounts(s.games), split)
+      if (next) return rotateWinners(game.id, winner, next.teamA, next.teamB)
+    }
+    endGame(game.id, winner)
   }
 
   const start = () => {
@@ -207,6 +222,7 @@ function CourtCard({
           Next game
         </button>
         <p className={`text-sm text-slate-500 ${canStart ? 'invisible' : ''}`}>{blocked}</p>
+        <WinnersStayToggle court={number} className="relative flex-col gap-1.5 rounded-xl bg-slate-50 px-3 py-1.5" />
       </div>
     )
   }
@@ -240,6 +256,14 @@ function CourtCard({
         </div>
       </div>
       <div className="flex h-16 items-center px-4">
+        {game.stayed && (
+          <p className="line-clamp-2 w-full rounded-lg bg-amber-400/25 px-3 py-1.5 text-xs leading-snug">
+            <strong>{teamName(game.stayed)}</strong> won and stayed on
+            {game.teamA.every((id) => game.stayed!.includes(id)) || game.teamB.every((id) => game.stayed!.includes(id))
+              ? ' together'
+              : ', split up'}
+          </p>
+        )}
         {game.set && (
           <p className="w-full rounded-lg bg-violet-500/30 px-3 py-1.5 text-xs leading-snug">
             <strong>Set game</strong> · these four asked to play together
@@ -263,6 +287,11 @@ function CourtCard({
         {askWinner ? (
           <>
             <p className="text-center text-sm font-bold text-slate-500">Who won?</p>
+            {winnersStay && (
+              <p className="-mt-1 text-center text-xs text-slate-500">
+                {together ? 'Winners stay on together' : 'Winners stay on and split up'}; losers go to the queue.
+              </p>
+            )}
             {(['A', 'B'] as const).map((side) => (
               <button key={side} className="d-btn d-btn-primary w-full" onClick={() => finish(side)}>
                 <span className="truncate">{teamName(side === 'A' ? game.teamA : game.teamB)}</span>
@@ -300,6 +329,8 @@ function CourtCard({
               <span className="min-w-0 text-sm leading-tight font-medium text-slate-500">New shuttles</span>
               <Stepper value={game.shuttles} onChange={(n) => addShuttle(game.id, n - game.shuttles)} />
             </div>
+            {/* Game format sits apart from the shuttle settings above. */}
+            <WinnersStayToggle court={number} className="w-full justify-between border-t border-slate-100 pt-2" />
             <button className="d-btn d-btn-primary d-btn-lg w-full" onClick={() => setAskWinner(true)}>
               End game
             </button>
@@ -449,6 +480,44 @@ function Team({ pair, players, total }: { pair: Pair; players: Map<string, Playe
       <span className="text-xs font-semibold whitespace-nowrap opacity-75" title="Team skill total">
         Σ {total}
       </span>
+    </div>
+  )
+}
+
+/** Turn winners stay on or off for one court. */
+function WinnersStayToggle({ court, className = '' }: { court: number; className?: string }) {
+  const on = useStore((s) => isWinnersStay(s.session, court))
+  const together = useStore((s) => isWinnersTogether(s.session, court))
+  const setWinnersStay = useStore((s) => s.setWinnersStay)
+  const setWinnersSplit = useStore((s) => s.setWinnersSplit)
+  return (
+    <div className={`flex items-center gap-3 text-sm font-medium text-slate-500 ${className}`}>
+      <label
+        className="flex cursor-pointer items-center gap-1.5 whitespace-nowrap"
+        title="After a game, the losers go to the queue and the winners stay on"
+      >
+        Winners stay
+        <input
+          type="checkbox"
+          className="d-toggle d-toggle-sm d-toggle-primary"
+          checked={on}
+          onChange={(e) => setWinnersStay(court, e.target.checked)}
+        />
+      </label>
+      {on && (
+        <label
+          className="flex cursor-pointer items-center gap-1.5 whitespace-nowrap"
+          title="On: the winners split up, each with one of the next two players. Off: they stay together and the next two challenge them."
+        >
+          Split up
+          <input
+            type="checkbox"
+            className="d-toggle d-toggle-sm d-toggle-primary"
+            checked={!together}
+            onChange={(e) => setWinnersSplit(court, e.target.checked)}
+          />
+        </label>
+      )}
     </div>
   )
 }
