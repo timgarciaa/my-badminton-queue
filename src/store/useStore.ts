@@ -97,6 +97,8 @@ interface State {
 
   closeSession: () => void
   resetSession: () => void
+  /** Delete everything on this device: players, the current session and history. */
+  clearAll: () => void
   importData: (data: { players: Player[]; session?: Session; history?: Session[] }) => void
 }
 
@@ -364,6 +366,8 @@ export const useStore = create<State>()(
           }),
 
         resetSession: () => set((st) => ({ session: newSession(st.session) })),
+
+        clearAll: () => set({ players: [], session: newSession(), history: [] }),
 
         importData: (data) =>
           set((st) => ({

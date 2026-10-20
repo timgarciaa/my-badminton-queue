@@ -28,6 +28,7 @@ export function SettingsPage() {
   const players = useStore((s) => s.players)
   const history = useStore((s) => s.history)
   const resetSession = useStore((s) => s.resetSession)
+  const clearAll = useStore((s) => s.clearAll)
   const importData = useStore((s) => s.importData)
   const fileRef = useRef<HTMLInputElement>(null)
   const [lastBackup, setLastBackup] = useState(readLastBackup)
@@ -62,6 +63,13 @@ export function SettingsPage() {
   }
 
   const stale = !lastBackup || Date.now() - lastBackup > 7 * 86_400_000
+
+  const clear = () => {
+    const justBackedUp = !!lastBackup && Date.now() - lastBackup < 60 * 60_000
+    const what = `${players.length} players, ${history.length} past ${history.length === 1 ? 'session' : 'sessions'} and today's session`
+    const warn = justBackedUp ? '' : "\n\nYou haven't exported a backup in the last hour. Export one first if you want to keep this data."
+    if (confirm(`Delete all data on this iPad: ${what}?${warn}\n\nThis cannot be undone.`)) clearAll()
+  }
 
   return (
     <div className="grid h-full grid-cols-[22rem_1fr] gap-5 p-5">
@@ -124,6 +132,19 @@ export function SettingsPage() {
               onClick={() => confirm('Discard the current session? This cannot be undone.') && resetSession()}
             >
               Discard session
+            </button>
+          </div>
+        </div>
+
+        <div className="d-card d-card-border border-rose-200 bg-base-100 shadow-sm">
+          <div className="d-card-body gap-3 p-4">
+            <h2 className="d-card-title text-lg">Clear all data</h2>
+            <p className="text-sm text-slate-600">
+              Delete players, today&apos;s session and history from this iPad, for example before importing a backup.
+            </p>
+            <p className="text-xs text-slate-500">Export a backup first if you want to keep anything.</p>
+            <button className="d-btn d-btn-error w-full" onClick={clear}>
+              Clear all data
             </button>
           </div>
         </div>
