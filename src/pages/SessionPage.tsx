@@ -227,6 +227,8 @@ function CourtCard({
       {/* Teams centred; the note slot below has a fixed height so all courts line up. */}
       <div className="relative flex flex-1 flex-col justify-center gap-2 px-4">
         <CourtLines className="inset-x-4 inset-y-1 text-white/45" />
+        {/* Before the teams so it flies under their names. */}
+        <FlyingShuttle />
         <div className="relative">
           <Team pair={game.teamA} players={players} total={total(game.teamA)} />
         </div>
@@ -321,6 +323,76 @@ function CourtCard({
   )
 }
 
+/** Random number between a and b. */
+const between = (a: number, b: number) => a + Math.random() * (b - a)
+
+/**
+ * A shuttlecock rallying over a court with a game on. Every shot goes to a
+ * random spot on the other side (straight, cross-court, short or deep), cork
+ * first, growing near the top of its arc. Off when Reduce Motion is on.
+ */
+function FlyingShuttle() {
+  const box = useRef<HTMLDivElement>(null)
+  const shuttle = useRef<SVGSVGElement>(null)
+  useEffect(() => {
+    const el = shuttle.current
+    const area = box.current
+    if (!el || !area || matchMedia('(prefers-reduced-motion: reduce)').matches) return
+    let x = between(20, 80)
+    let y = between(10, 30)
+    let stopped = false
+    let current: Animation | undefined
+    const shot = () => {
+      if (stopped) return
+      // Land anywhere on the far half: near the net for a drop, deep for a clear.
+      const toTop = y > 50
+      const nx = between(10, 90)
+      const ny = toTop ? between(6, 44) : between(56, 94)
+      const { width, height } = area.getBoundingClientRect()
+      const dx = ((nx - x) / 100) * width
+      const dy = ((ny - y) / 100) * height
+      // The cork points down at 0°; turn it to face where it's going.
+      const angle = (Math.atan2(-dx, dy) * 180) / Math.PI
+      const at = (px: number, py: number, scale: number) => ({
+        left: `${px}%`,
+        top: `${py}%`,
+        transform: `translate(-50%, -50%) rotate(${angle}deg) scale(${scale})`,
+      })
+      // Higher, slower shots for long ones; a little random either way.
+      const long = Math.abs(ny - y) / 88
+      current = el.animate(
+        [at(x, y, 0.85), { ...at((x + nx) / 2, (y + ny) / 2, 1.1 + long * 0.4), offset: 0.45 }, at(nx, ny, 0.85)],
+        { duration: between(700, 1000) + long * 700, easing: 'cubic-bezier(.3,.6,.6,1)', fill: 'forwards' },
+      )
+      x = nx
+      y = ny
+      // A short pause while the player gets to it, then the return.
+      current.onfinish = () => window.setTimeout(shot, between(80, 260))
+    }
+    shot()
+    return () => {
+      stopped = true
+      current?.cancel()
+    }
+  }, [])
+  return (
+    <div ref={box} className="pointer-events-none absolute inset-x-4 inset-y-1" aria-hidden>
+      <svg
+        ref={shuttle}
+        viewBox="0 0 20 28"
+        className="absolute h-7 w-5 drop-shadow-[0_3px_3px_rgba(0,0,0,0.35)] motion-reduce:hidden"
+      >
+        {/* Feather skirt, then the cork at the front */}
+        <path d="M4 1h12l-3.5 17h-5z" fill="white" />
+        <path d="M7 1.5l1.6 16.5M10 1v17M13 1.5l-1.6 16.5" stroke="#cbd5e1" strokeWidth="0.8" />
+        <path d="M4.6 6h10.8M5.6 11h8.8" stroke="#cbd5e1" strokeWidth="0.8" />
+        <rect x="7.6" y="17" width="4.8" height="2" rx="0.5" fill="#0f766e" />
+        <path d="M7.6 19h4.8v3.5a2.4 2.4 0 0 1-4.8 0z" fill="#fef3c7" />
+      </svg>
+    </div>
+  )
+}
+
 /** A folded court: number, game and time on court. Tap to open it. */
 function CourtStrip({
   number,
@@ -362,7 +434,7 @@ function CourtStrip({
 
 function Team({ pair, players, total }: { pair: Pair; players: Map<string, Player>; total: number }) {
   return (
-    <div className="flex items-center gap-2 rounded-xl bg-emerald-700/90 px-3 py-2 ring-1 ring-white/25">
+    <div className="flex items-center gap-2 rounded-xl bg-emerald-700 px-3 py-2 ring-1 ring-white/25">
       <div className="min-w-0 flex-1 space-y-1">
         {pair.map((id) => {
           const p = players.get(id)
