@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { allSplits, bumpedPlayers, meetCounts, partnerCounts } from '../lib/balance'
 import { planGames } from '../lib/plan'
 import { QueuePanel } from '../components/QueuePanel'
@@ -15,6 +15,36 @@ const SWAP_REASON_SHORT: Record<GameSwap['reason'], string> = {
   lopsided: ' · more even game',
 }
 
+
+/** Courts shown full size at once at most; the rest fold into strips. */
+const MAX_OPEN = 3
+/** Narrowest a full court card gets before another court folds. */
+const MIN_CARD = 215
+const STRIP = 56
+const GAP = 16
+
+/** How many courts fit at full size in a row this wide, with the rest as strips. */
+function fitCourts(width: number, count: number): number {
+  if (!width) return Math.min(MAX_OPEN, count)
+  for (let k = Math.min(MAX_OPEN, count); k > 1; k--) {
+    if ((width - (count - k) * STRIP - (count - 1) * GAP) / k >= MIN_CARD) return k
+  }
+  return 1
+}
+
+/** Width of an element, kept up to date as it resizes. */
+function useWidth<T extends HTMLElement>() {
+  const ref = useRef<T>(null)
+  const [width, setWidth] = useState(0)
+  useEffect(() => {
+    const el = ref.current
+    if (!el) return
+    const ro = new ResizeObserver(([entry]) => setWidth(entry.contentRect.width))
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
+  return [ref, width] as const
+}
 
 /** Plan the next game exactly as the queue shows it and Next game starts it. */
 function planNext(session: Session, players: Map<string, Player>) {
@@ -43,28 +73,49 @@ export function SessionPage({ onGoToCheckIn }: { onGoToCheckIn: () => void }) {
   const plan = planNext(session, players)
   const started = !!session.timer
 
+  // Courts that don't fit at full size fold into narrow strips (an accordion),
+  // so court cards keep their size whatever the count.
+  const [courtsRef, courtsWidth] = useWidth<HTMLDivElement>()
+  const [opened, setOpened] = useState<number[]>([1, 2, 3])
+  const count = session.courtCount
+  const fits = fitCourts(courtsWidth, count)
+  const open = opened.filter((c) => c <= count).slice(-fits)
+  for (let c = 1; open.length < fits && c <= count; c++) if (!open.includes(c)) open.push(c)
+  // Opening a court folds the one opened longest ago.
+  const openCourt = (c: number) => setOpened([...open.filter((x) => x !== c), c].slice(-fits))
+  const gameOn = (gameId: string | null) => session.games.find((g) => g.id === gameId)
+
   return (
     <div className="flex h-full gap-5 p-5">
       <section className="flex min-w-0 flex-1 flex-col gap-4">
         <div className="flex h-11 items-center justify-between">
-          <h2 className="text-xl font-bold">Courts</h2>
+          <h2 className="text-xl font-bold">
+            Courts
+            {fits < count && (
+              <span className="ml-3 text-sm font-medium text-slate-500">Tap a folded court to open it</span>
+            )}
+          </h2>
           <Stepper label="Courts" value={session.courtCount} min={1} max={6} onChange={setCourtCount} />
         </div>
-        <div
-          className="grid flex-1 auto-rows-fr gap-4"
-          style={{ gridTemplateColumns: `repeat(${Math.min(session.courtCount, 3)}, minmax(0, 1fr))` }}
-        >
-          {session.courts.map((gameId, i) => (
-            <CourtCard
-              key={i}
-              number={i + 1}
-              game={session.games.find((g) => g.id === gameId)}
-              gameNo={gameId ? gameNumber(session.games, session.games.find((g) => g.id === gameId)!) : 0}
-              canStart={started && plan.games.length > 0}
-              blocked={!started ? 'Start the session first' : 'Need 4 free players in the queue'}
-              players={players}
-            />
-          ))}
+        <div ref={courtsRef} className="flex min-h-0 flex-1 gap-4">
+          {session.courts.map((gameId, i) => {
+            const game = gameOn(gameId)
+            const gameNo = game ? gameNumber(session.games, game) : 0
+            return open.includes(i + 1) ? (
+              <div key={i} className="flex min-w-0 flex-1 *:flex-1">
+                <CourtCard
+                  number={i + 1}
+                  game={game}
+                  gameNo={gameNo}
+                  canStart={started && plan.games.length > 0}
+                  blocked={!started ? 'Start the session first' : 'Need 4 free players in the queue'}
+                  players={players}
+                />
+              </div>
+            ) : (
+              <CourtStrip key={i} number={i + 1} game={game} gameNo={gameNo} onOpen={() => openCourt(i + 1)} />
+            )
+          })}
         </div>
       </section>
 
@@ -147,9 +198,12 @@ function CourtCard({
 
   if (!game) {
     return (
-      <div className="d-card items-center justify-center gap-4 border-2 border-dashed border-slate-300 bg-white/60 p-6">
-        <p className="text-sm font-bold tracking-widest text-slate-400 uppercase">Court {number}</p>
-        <button className="d-btn d-btn-primary d-btn-lg px-8" disabled={!canStart} onClick={start}>
+      <div className="d-card relative items-center justify-center gap-4 border-2 border-dashed border-slate-300 bg-white/60 p-6">
+        <CourtLines className="inset-6 text-slate-300/70" />
+        <p className="relative rounded-full bg-slate-50 px-2 text-sm font-bold tracking-widest text-slate-400 uppercase">
+          Court {number}
+        </p>
+        <button className="d-btn d-btn-primary d-btn-lg relative px-8" disabled={!canStart} onClick={start}>
           Next game
         </button>
         <p className={`text-sm text-slate-500 ${canStart ? 'invisible' : ''}`}>{blocked}</p>
@@ -163,20 +217,25 @@ function CourtCard({
   return (
     <div className="d-card overflow-hidden bg-gradient-to-b from-emerald-600 to-emerald-700 text-white shadow-sm">
       <div className="flex h-12 items-center justify-between gap-2 px-4">
-        <span className="flex items-center gap-2">
-          <span className="text-sm font-semibold tracking-widest uppercase opacity-80">Court {number}</span>
+        <span className="flex min-w-0 items-center gap-1.5">
+          <span className="text-sm font-semibold tracking-wide whitespace-nowrap uppercase opacity-80">Court {number}</span>
           <span className="d-badge border-0 bg-white/20 font-black text-white">Game {gameNo}</span>
         </span>
         <span className="font-mono text-sm font-semibold tabular-nums opacity-90">{elapsed(game.startedAt, now)}</span>
       </div>
 
       {/* Teams centred; the note slot below has a fixed height so all courts line up. */}
-      <div className="flex flex-1 flex-col justify-center gap-2 px-4">
-        <Team pair={game.teamA} players={players} total={total(game.teamA)} />
-        <div className="flex items-center gap-2 text-xs font-bold opacity-70">
-          <div className="h-px flex-1 bg-white/40" /> VS <div className="h-px flex-1 bg-white/40" />
+      <div className="relative flex flex-1 flex-col justify-center gap-2 px-4">
+        <CourtLines className="inset-x-4 inset-y-1 text-white/45" />
+        <div className="relative">
+          <Team pair={game.teamA} players={players} total={total(game.teamA)} />
         </div>
-        <Team pair={game.teamB} players={players} total={total(game.teamB)} />
+        <div className="relative flex justify-center">
+          <span className="rounded-full bg-emerald-700 px-2 text-xs font-bold text-white/80">VS</span>
+        </div>
+        <div className="relative">
+          <Team pair={game.teamB} players={players} total={total(game.teamB)} />
+        </div>
       </div>
       <div className="flex h-16 items-center px-4">
         {game.set && (
@@ -222,7 +281,7 @@ function CourtCard({
               <label className="flex items-center justify-between gap-2">
                 <span className="text-sm font-medium text-slate-500">Shuttle</span>
                 <select
-                  className="d-select w-36 font-semibold"
+                  className="d-select w-36 min-w-0 font-semibold"
                   // Older games have no type; they count as the first one.
                   value={shuttleTypes.some((t) => t.id === game.shuttleType) ? game.shuttleType : shuttleTypes[0].id}
                   onChange={(e) => setGameShuttleType(game.id, e.target.value)}
@@ -236,7 +295,7 @@ function CourtCard({
               </label>
             )}
             <div className="flex items-center justify-between gap-2">
-              <span className="text-sm font-medium whitespace-nowrap text-slate-500">New shuttles</span>
+              <span className="min-w-0 text-sm leading-tight font-medium text-slate-500">New shuttles</span>
               <Stepper value={game.shuttles} onChange={(n) => addShuttle(game.id, n - game.shuttles)} />
             </div>
             <button className="d-btn d-btn-primary d-btn-lg w-full" onClick={() => setAskWinner(true)}>
@@ -262,9 +321,48 @@ function CourtCard({
   )
 }
 
+/** A folded court: number, game and time on court. Tap to open it. */
+function CourtStrip({
+  number,
+  game,
+  gameNo,
+  onOpen,
+}: {
+  number: number
+  game?: Game
+  gameNo: number
+  onOpen: () => void
+}) {
+  const now = useNow()
+  return (
+    <button
+      onClick={onOpen}
+      aria-label={`Open court ${number}`}
+      className={`d-card w-16 shrink-0 items-center gap-3 py-4 transition active:scale-[0.97] ${
+        game
+          ? 'bg-gradient-to-b from-emerald-600 to-emerald-700 text-white shadow-sm'
+          : 'border-2 border-dashed border-slate-300 bg-white/60 text-slate-500'
+      }`}
+    >
+      <span className="text-2xl font-black">{number}</span>
+      <span className="text-xs font-bold tracking-widest uppercase [writing-mode:vertical-rl]">
+        Court {number} · {game ? `Game ${gameNo}` : 'Free'}
+      </span>
+      {game && (
+        <span className="font-mono text-sm font-semibold tabular-nums [writing-mode:vertical-rl]">
+          {elapsed(game.startedAt, now)}
+        </span>
+      )}
+      <svg viewBox="0 0 24 24" className="mt-auto h-6 w-6 opacity-70" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+        <path d="M9 6l6 6-6 6" />
+      </svg>
+    </button>
+  )
+}
+
 function Team({ pair, players, total }: { pair: Pair; players: Map<string, Player>; total: number }) {
   return (
-    <div className="flex items-center gap-2 rounded-xl bg-white/15 px-3 py-2">
+    <div className="flex items-center gap-2 rounded-xl bg-emerald-700/90 px-3 py-2 ring-1 ring-white/25">
       <div className="min-w-0 flex-1 space-y-1">
         {pair.map((id) => {
           const p = players.get(id)
@@ -279,6 +377,37 @@ function Team({ pair, players, total }: { pair: Pair; players: Map<string, Playe
       <span className="text-xs font-semibold whitespace-nowrap opacity-75" title="Team skill total">
         Σ {total}
       </span>
+    </div>
+  )
+}
+
+/**
+ * Badminton doubles court markings (13.4 m × 6.1 m), seen from above with the
+ * net across the middle. Stretched to fill its box; lines keep their width.
+ */
+function CourtLines({ className = '' }: { className?: string }) {
+  const line = { vectorEffect: 'non-scaling-stroke' as const }
+  return (
+    // An SVG doesn't stretch to absolute insets on its own, so a box sets its size.
+    <div className={`pointer-events-none absolute ${className}`} aria-hidden>
+      <svg
+        viewBox="0 0 610 1340"
+        preserveAspectRatio="none"
+        className="h-full w-full overflow-visible"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth={2}
+      >
+        <rect x="0" y="0" width="610" height="1340" {...line} />
+        {/* Singles sidelines */}
+        <path d="M46 0V1340M564 0V1340" {...line} />
+        {/* Long service lines for doubles, and short service lines */}
+        <path d="M0 76H610M0 1264H610M0 472H610M0 868H610" {...line} />
+        {/* Centre lines */}
+        <path d="M305 0V472M305 868V1340" {...line} />
+        {/* Net */}
+        <path d="M-12 670H622" strokeWidth={4} strokeDasharray="6 3" {...line} />
+      </svg>
     </div>
   )
 }
