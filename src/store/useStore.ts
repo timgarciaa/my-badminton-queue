@@ -3,13 +3,27 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { heldIds, isSetReady, setIds } from '../lib/plan'
 import { applySwap, dequeue, enqueue, move, pushFront, swap } from '../lib/queue'
-import type { Game, GameSwap, Gender, Pair, Player, Session, SetGame, Skill } from '../types'
+import type { Game, GameSwap, Gender, Pair, Player, Session, SetGame, ShuttleType, Skill } from '../types'
 
 const uid = () => crypto.randomUUID()
 const today = () => new Date().toLocaleDateString('en-CA')
 
-export function newSession(prev?: Pick<Session, 'courtCount' | 'courtFee' | 'shuttlePrice'>): Session {
+/** Give an older session (one shuttle price) a shuttle type list. */
+export function withShuttleTypes(s: Session): Session {
+  if (s.shuttleTypes?.length) return s
+  const type: ShuttleType = { id: uid(), name: 'Shuttle', price: s.shuttlePrice, extra: s.extraShuttles }
+  return { ...s, shuttleTypes: [type], shuttleTypeId: type.id, extraShuttles: 0 }
+}
+
+export function newSession(
+  prev?: Pick<Session, 'courtCount' | 'courtFee' | 'shuttlePrice' | 'shuttleTypes' | 'shuttleTypeId'>,
+): Session {
   const courtCount = prev?.courtCount ?? 2
+  // Keep the shuttle types and prices; the counts start again.
+  const shuttleTypes = prev?.shuttleTypes?.length
+    ? prev.shuttleTypes.map((t) => ({ ...t, extra: 0 }))
+    : [{ id: uid(), name: 'Shuttle', price: prev?.shuttlePrice ?? 0, extra: 0 }]
+  const shuttleTypeId = shuttleTypes.some((t) => t.id === prev?.shuttleTypeId) ? prev!.shuttleTypeId : shuttleTypes[0].id
   return {
     id: uid(),
     date: today(),
@@ -17,6 +31,8 @@ export function newSession(prev?: Pick<Session, 'courtCount' | 'courtFee' | 'shu
     courtFee: prev?.courtFee ?? 0,
     shuttlePrice: prev?.shuttlePrice ?? 0,
     extraShuttles: 0,
+    shuttleTypes,
+    shuttleTypeId,
     attendees: [],
     queue: [],
     courts: Array(courtCount).fill(null),
@@ -53,6 +69,19 @@ interface State {
 
   setSessionField: (field: 'courtFee' | 'shuttlePrice' | 'extraShuttles', value: number) => void
   setCourtCount: (n: number) => void
+  addShuttleType: (name: string, price: number) => void
+  updateShuttleType: (id: string, patch: Partial<Pick<ShuttleType, 'name' | 'price' | 'extra'>>) => void
+  /** Remove a shuttle type that no game used. */
+  removeShuttleType: (id: string) => void
+  /** Shuttle type new games start with. */
+  setDefaultShuttleType: (id: string) => void
+  /** Change which shuttle type a game is using. */
+  setGameShuttleType: (gameId: string, typeId: string) => void
+  /** Start the session countdown for the booked hours. */
+  startTimer: (hours: number) => void
+  /** Add or take away booked minutes. */
+  adjustTimer: (minutes: number) => void
+  stopTimer: () => void
 
   /** Hold four players for a game together; they play next once all four are free. */
   addSetGame: (teamA: Pair, teamB: Pair) => void
@@ -178,6 +207,44 @@ export const useStore = create<State>()(
             return { ...s, courtCount: count, courts }
           }),
 
+        addShuttleType: (name, price) =>
+          updateSession((s) => {
+            const types = s.shuttleTypes ?? []
+            const type: ShuttleType = { id: uid(), name: name.trim() || `Shuttle ${types.length + 1}`, price, extra: 0 }
+            return { ...s, shuttleTypes: [...types, type] }
+          }),
+        updateShuttleType: (id, patch) =>
+          updateSession((s) => ({
+            ...s,
+            shuttleTypes: s.shuttleTypes?.map((t) => (t.id === id ? { ...t, ...patch } : t)),
+          })),
+        removeShuttleType: (id) =>
+          updateSession((s) => {
+            const types = s.shuttleTypes ?? []
+            if (types.length <= 1 || s.games.some((g) => g.shuttleType === id)) return s
+            const rest = types.filter((t) => t.id !== id)
+            return {
+              ...s,
+              shuttleTypes: rest,
+              shuttleTypeId: s.shuttleTypeId === id ? rest[0].id : s.shuttleTypeId,
+              games: s.games.map((g) => (g.shuttleType === id ? { ...g, shuttleType: undefined } : g)),
+            }
+          }),
+        setDefaultShuttleType: (id) => updateSession((s) => ({ ...s, shuttleTypeId: id })),
+        setGameShuttleType: (gameId, typeId) =>
+          updateSession((s) => ({
+            ...s,
+            games: s.games.map((g) => (g.id === gameId ? { ...g, shuttleType: typeId } : g)),
+          })),
+
+        startTimer: (hours) =>
+          updateSession((s) => ({ ...s, timer: { startedAt: Date.now(), minutes: Math.round(hours * 60) } })),
+        adjustTimer: (minutes) =>
+          updateSession((s) =>
+            s.timer ? { ...s, timer: { ...s.timer, minutes: Math.max(30, s.timer.minutes + minutes) } } : s,
+          ),
+        stopTimer: () => updateSession((s) => ({ ...s, timer: undefined })),
+
         addSetGame: (teamA, teamB) =>
           updateSession((s) => {
             const ids = [...teamA, ...teamB]
@@ -197,7 +264,10 @@ export const useStore = create<State>()(
           updateSession((s) => {
             if (s.courts[court - 1]) return s
             const number = Math.max(0, ...s.games.map((g, i) => g.number ?? i + 1)) + 1
-            const game: Game = { id: uid(), number, court, teamA, teamB, startedAt: Date.now(), shuttles: 0 }
+            // Shuttles are reused, but a court's first game needs a new one.
+            const firstOnCourt = !s.games.some((g) => g.court === court)
+            const game: Game = { id: uid(), number, court, teamA, teamB, startedAt: Date.now(), shuttles: firstOnCourt ? 1 : 0 }
+            if (s.shuttleTypeId) game.shuttleType = s.shuttleTypeId
             if (gameSwap) game.swap = gameSwap
             if (setId) game.set = true
             const ids = [...teamA, ...teamB]
@@ -298,12 +368,21 @@ export const useStore = create<State>()(
         importData: (data) =>
           set((st) => ({
             players: data.players ?? st.players,
-            session: data.session ?? st.session,
+            session: data.session ? withShuttleTypes(data.session) : st.session,
             history: data.history ?? st.history,
           })),
       }
     },
-    { name: 'mbq-store', version: 1 },
+    {
+      name: 'mbq-store',
+      version: 2,
+      migrate: (state, version) => {
+        const st = state as State
+        // v2: shuttle types with their own prices.
+        if (version < 2 && st?.session) st.session = withShuttleTypes(st.session)
+        return st
+      },
+    },
   ),
 )
 

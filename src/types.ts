@@ -44,6 +44,15 @@ export interface GameSwap {
   also?: { in: string; out: string }
 }
 
+/** A kind of shuttlecock used in a session (e.g. Vortex, XP2), with its own price. */
+export interface ShuttleType {
+  id: string
+  name: string
+  price: number
+  /** Manual adjustment on top of shuttles counted from games. */
+  extra: number
+}
+
 export interface Game {
   id: string
   /** Game number within the session, in start order (missing on older games). */
@@ -55,6 +64,8 @@ export interface Game {
   endedAt?: number
   /** New shuttlecocks opened during this game (shuttles are reused until worn out). */
   shuttles: number
+  /** Shuttle type opened in this game; missing on older games (first type). */
+  shuttleType?: string
   swap?: GameSwap
   /** Winning team; missing if not recorded. */
   winner?: 'A' | 'B'
@@ -83,9 +94,14 @@ export interface Session {
   date: string
   courtCount: number
   courtFee: number
+  /** Price per shuttle on sessions from before shuttle types; see shuttleTypes. */
   shuttlePrice: number
-  /** Manual adjustment on top of shuttles counted from games. */
+  /** Manual adjustment on sessions from before shuttle types; see ShuttleType.extra. */
   extraShuttles: number
+  /** Shuttle types with their prices. Missing on older sessions, which use shuttlePrice. */
+  shuttleTypes?: ShuttleType[]
+  /** Default shuttle type; new games start with it. */
+  shuttleTypeId?: string
   attendees: Attendee[]
   queue: string[]
   /** Game id currently on each court, index = court number - 1. */
@@ -97,5 +113,7 @@ export interface Session {
   nextTeams?: { teamA: Pair; teamB: Pair }
   /** Set games waiting to be played, oldest first. */
   setGames?: SetGame[]
+  /** Booked court time, counted down once the session is started. */
+  timer?: { startedAt: number; minutes: number }
   status: 'open' | 'closed'
 }

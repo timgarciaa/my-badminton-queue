@@ -44,66 +44,6 @@ export function PlayerTags({ player }: { player: Player }) {
   )
 }
 
-export function GenderPicker({
-  value,
-  onChange,
-  compact = false,
-}: {
-  value?: Gender
-  onChange: (g: Gender) => void
-  compact?: boolean
-}) {
-  return (
-    <div className="flex gap-1.5">
-      {(['M', 'F'] as Gender[]).map((g) => (
-        <button
-          key={g}
-          type="button"
-          onClick={() => onChange(g)}
-          title={GENDER_LABELS[g]}
-          className={`rounded-lg py-2 text-sm font-semibold ring-1 transition ${compact ? 'w-10' : 'px-4'} ${
-            value === g
-              ? g === 'M'
-                ? 'bg-indigo-100 text-indigo-800 ring-2 ring-indigo-300'
-                : 'bg-pink-100 text-pink-800 ring-2 ring-pink-300'
-              : 'bg-white text-slate-500 ring-slate-200'
-          }`}
-        >
-          {compact ? g : GENDER_LABELS[g]}
-        </button>
-      ))}
-    </div>
-  )
-}
-
-export function SkillPicker({
-  value,
-  onChange,
-  compact = false,
-}: {
-  value: Skill
-  onChange: (s: Skill) => void
-  compact?: boolean
-}) {
-  return (
-    <div className="flex gap-1.5">
-      {([1, 2, 3, 4, 5] as Skill[]).map((s) => (
-        <button
-          key={s}
-          type="button"
-          onClick={() => onChange(s)}
-          title={SKILL_LABELS[s]}
-          className={`rounded-lg py-2 text-sm font-semibold ring-1 transition ${compact ? 'w-9' : 'px-3'} ${
-            value === s ? `${SKILL_COLORS[s]} ring-2` : 'bg-white text-slate-500 ring-slate-200'
-          }`}
-        >
-          {compact ? s : SKILL_LABELS[s]}
-        </button>
-      ))}
-    </div>
-  )
-}
-
 export function Stepper({
   value,
   onChange,
@@ -122,7 +62,7 @@ export function Stepper({
       {label && <span className="text-sm font-medium text-slate-500">{label}</span>}
       <button
         type="button"
-        className="btn-ghost h-11 w-11 p-0 text-xl"
+        className="d-btn d-btn-square h-11 w-11 border-slate-200 bg-white text-xl"
         disabled={value <= min}
         onClick={() => onChange(value - 1)}
         aria-label="Decrease"
@@ -132,7 +72,7 @@ export function Stepper({
       <span className="min-w-8 text-center text-xl font-bold tabular-nums">{value}</span>
       <button
         type="button"
-        className="btn-ghost h-11 w-11 p-0 text-xl"
+        className="d-btn d-btn-square h-11 w-11 border-slate-200 bg-white text-xl"
         disabled={value >= max}
         onClick={() => onChange(value + 1)}
         aria-label="Increase"
@@ -193,4 +133,28 @@ export function elapsed(from: number, now: number) {
 
 export function EmptyState({ children }: { children: ReactNode }) {
   return <div className="rounded-2xl border-2 border-dashed border-slate-300 p-8 text-center text-slate-500">{children}</div>
+}
+
+/** Round initials badge, tinted by gender. */
+export function Initials({ player, muted = false, size = 'w-12' }: { player: Player; muted?: boolean; size?: string }) {
+  const initials = player.name
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((w) => w[0].toUpperCase())
+    .join('')
+  const tint = muted
+    ? 'bg-slate-100 text-slate-500'
+    : player.gender === 'F'
+      ? 'bg-pink-100 text-pink-800'
+      : player.gender === 'M'
+        ? 'bg-indigo-100 text-indigo-800'
+        : 'bg-teal-100 text-teal-800'
+  return (
+    <div className="d-avatar d-avatar-placeholder shrink-0">
+      <div className={`${size} rounded-full ${tint}`}>
+        <span className="text-base font-bold">{initials}</span>
+      </div>
+    </div>
+  )
 }

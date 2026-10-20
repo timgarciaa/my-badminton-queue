@@ -331,4 +331,25 @@ describe('cost', () => {
     expect(c.perHead).toBe(10) // rounded up to a whole peso
     expect(c.surplus).toBe(8)
   })
+
+  it('prices each shuttle type separately', () => {
+    const game = (id: string, shuttles: number, shuttleType?: string) =>
+      ({ id, court: 1, teamA: ['a', 'b'], teamB: ['c', 'd'], startedAt: 0, shuttles, shuttleType }) as Session['games'][number]
+    const c = costSummary({
+      ...base,
+      shuttleTypes: [
+        { id: 'v', name: 'Vortex', price: 80, extra: 1 },
+        { id: 'x', name: 'XP2', price: 100, extra: 0 },
+      ],
+      shuttleTypeId: 'x',
+      // A game from before types counts as the first type.
+      games: [game('g1', 2, 'v'), game('g2', 1), game('g3', 2, 'x')],
+    })
+    expect(c.shuttles.map((l) => [l.name, l.fromGames, l.used, l.cost])).toEqual([
+      ['Vortex', 3, 4, 320],
+      ['XP2', 2, 2, 200],
+    ])
+    expect(c.shuttlesUsed).toBe(6)
+    expect(c.total).toBe(120 + 320 + 200)
+  })
 })

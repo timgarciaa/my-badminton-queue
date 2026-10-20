@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { costSummary, money } from './lib/cost'
+import { SessionTimer } from './components/SessionTimer'
 import { CheckInPage } from './pages/CheckInPage'
 import { CostsPage } from './pages/CostsPage'
 import { GamesPage } from './pages/GamesPage'
@@ -41,7 +42,10 @@ export default function App() {
             })}
           </span>
         </div>
-        <div className="ml-auto flex gap-6 text-sm text-slate-600">
+        <div className="ml-auto">
+          <SessionTimer />
+        </div>
+        <div className="flex gap-6 text-sm text-slate-600">
           <Stat label="Present" value={session.attendees.length} />
           <Stat label="Waiting" value={session.queue.length} />
           <Stat label="Playing" value={session.courts.filter(Boolean).length * 4} />

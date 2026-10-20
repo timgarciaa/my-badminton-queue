@@ -36,6 +36,9 @@ importers:
       '@vitejs/plugin-react':
         specifier: ^6.1.1
         version: 6.1.2(vite@8.3.4(@types/node@24.19.2)(jiti@2.7.0)(terser@5.51.2))
+      daisyui:
+        specifier: ^5.7.50
+        version: 5.7.50
       oxlint:
         specifier: ^1.81.0
         version: 1.88.0
@@ -1466,6 +1469,9 @@ packages:
 
   csstype@3.2.3:
     resolution: {integrity: sha512-z1HGKcYy2xA8AGQfwrn0PAy+PB7X/GSj3UVJW9qKyn43xWa+gl5nXmU4qqLMRzWVLFC8KusUX8T/0kCiOYpAIQ==}
+
+  daisyui@5.7.50:
+    resolution: {integrity: sha512-+/LRqnTCoc7s/bJEKKwtJSwzeXCVdAmRdNmZeZzgHCaQ9PJyl7j+2V2U32GQDMyD+VDkP9e/+JGoC72Y1hLk7w==}
 
   data-view-buffer@1.0.2:
     resolution: {integrity: sha512-EmKO5V3OLXh1rtK2wgXRansaK1/mtVdTUEiEI0W8RkvgT05kfxaH29PliLnpLP73yYO6142Q72QNa8Wx/A5CqQ==}
@@ -3909,6 +3915,8 @@ snapshots:
   crypto-random-string@2.0.0: {}
 
   csstype@3.2.3: {}
+
+  daisyui@5.7.50: {}
 
   data-view-buffer@1.0.2:
     dependencies:

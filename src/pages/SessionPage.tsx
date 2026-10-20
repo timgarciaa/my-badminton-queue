@@ -41,11 +41,12 @@ export function SessionPage({ onGoToCheckIn }: { onGoToCheckIn: () => void }) {
   const [setting, setSetting] = useState(false)
 
   const plan = planNext(session, players)
+  const started = !!session.timer
 
   return (
     <div className="flex h-full gap-5 p-5">
       <section className="flex min-w-0 flex-1 flex-col gap-4">
-        <div className="flex items-center justify-between">
+        <div className="flex h-11 items-center justify-between">
           <h2 className="text-xl font-bold">Courts</h2>
           <Stepper label="Courts" value={session.courtCount} min={1} max={6} onChange={setCourtCount} />
         </div>
@@ -59,20 +60,26 @@ export function SessionPage({ onGoToCheckIn }: { onGoToCheckIn: () => void }) {
               number={i + 1}
               game={session.games.find((g) => g.id === gameId)}
               gameNo={gameId ? gameNumber(session.games, session.games.find((g) => g.id === gameId)!) : 0}
-              canStart={plan.games.length > 0}
+              canStart={started && plan.games.length > 0}
+              blocked={!started ? 'Start the session first' : 'Need 4 free players in the queue'}
               players={players}
             />
           ))}
         </div>
       </section>
 
-      <aside className="flex w-[22rem] shrink-0 flex-col gap-3">
-        <div className="flex items-center justify-between gap-2">
+      <aside className="flex w-[22rem] shrink-0 flex-col gap-4">
+        <div className="flex h-11 items-center justify-between gap-2">
           <h2 className="text-xl font-bold">
             Queue <span className="text-base font-medium text-slate-500">({session.queue.length} waiting)</span>
           </h2>
           {session.attendees.length >= 4 && (
-            <button className="btn-ghost h-10 px-3 py-0 text-sm whitespace-nowrap" onClick={() => setSetting(true)}>
+            <button
+              className="d-btn h-11 border-slate-200 bg-white whitespace-nowrap"
+              disabled={!started}
+              title={started ? undefined : 'Start the session first'}
+              onClick={() => setSetting(true)}
+            >
               Set a game
             </button>
           )}
@@ -89,12 +96,15 @@ function CourtCard({
   game,
   gameNo,
   canStart,
+  blocked,
   players,
 }: {
   number: number
   game?: Game
   gameNo: number
   canStart: boolean
+  /** Why Next game is disabled. */
+  blocked: string
   players: Map<string, Player>
 }) {
   const startGame = useStore((s) => s.startGame)
@@ -102,6 +112,8 @@ function CourtCard({
   const cancelGame = useStore((s) => s.cancelGame)
   const addShuttle = useStore((s) => s.addShuttle)
   const now = useNow()
+  const shuttleTypes = useStore((s) => s.session.shuttleTypes)
+  const setGameShuttleType = useStore((s) => s.setGameShuttleType)
   const [askWinner, setAskWinner] = useState(false)
   const skillOf = (id: string) => players.get(id)?.skill ?? 3
   const teamName = (t: Pair) => t.map((id) => players.get(id)?.name ?? '?').join(' & ')
@@ -135,12 +147,12 @@ function CourtCard({
 
   if (!game) {
     return (
-      <div className="card flex flex-col items-center justify-center gap-4 border-2 border-dashed border-slate-200 p-6 shadow-none">
+      <div className="d-card items-center justify-center gap-4 border-2 border-dashed border-slate-300 bg-white/60 p-6">
         <p className="text-sm font-bold tracking-widest text-slate-400 uppercase">Court {number}</p>
-        <button className="btn-primary px-8 py-4 text-lg" disabled={!canStart} onClick={start}>
+        <button className="d-btn d-btn-primary d-btn-lg px-8" disabled={!canStart} onClick={start}>
           Next game
         </button>
-        {!canStart && <p className="text-sm text-slate-500">Need 4 free players in the queue</p>}
+        <p className={`text-sm text-slate-500 ${canStart ? 'invisible' : ''}`}>{blocked}</p>
       </div>
     )
   }
@@ -149,27 +161,32 @@ function CourtCard({
   const fresh = now - game.startedAt < 2 * 60_000
 
   return (
-    <div className="card flex flex-col overflow-hidden bg-gradient-to-b from-emerald-600 to-emerald-700 text-white ring-emerald-800">
-      <div className="flex items-center justify-between px-4 pt-3 text-sm font-semibold">
+    <div className="d-card overflow-hidden bg-gradient-to-b from-emerald-600 to-emerald-700 text-white shadow-sm">
+      <div className="flex h-12 items-center justify-between gap-2 px-4">
         <span className="flex items-center gap-2">
-          <span className="tracking-widest uppercase opacity-80">Court {number}</span>
-          <span className="rounded-lg bg-white/20 px-2.5 py-0.5 text-base font-black">Game {gameNo}</span>
+          <span className="text-sm font-semibold tracking-widest uppercase opacity-80">Court {number}</span>
+          <span className="d-badge border-0 bg-white/20 font-black text-white">Game {gameNo}</span>
         </span>
-        <span className="tabular-nums opacity-90">{elapsed(game.startedAt, now)}</span>
+        <span className="font-mono text-sm font-semibold tabular-nums opacity-90">{elapsed(game.startedAt, now)}</span>
       </div>
-      {game.set && (
-        <p className="px-4 pt-1.5 text-xs font-bold tracking-wide text-violet-100 uppercase">Set game</p>
-      )}
-      <div className="flex flex-1 flex-col justify-center gap-2 px-4 py-3">
+
+      {/* Teams centred; the note slot below has a fixed height so all courts line up. */}
+      <div className="flex flex-1 flex-col justify-center gap-2 px-4">
         <Team pair={game.teamA} players={players} total={total(game.teamA)} />
         <div className="flex items-center gap-2 text-xs font-bold opacity-70">
           <div className="h-px flex-1 bg-white/40" /> VS <div className="h-px flex-1 bg-white/40" />
         </div>
         <Team pair={game.teamB} players={players} total={total(game.teamB)} />
+      </div>
+      <div className="flex h-16 items-center px-4">
+        {game.set && (
+          <p className="w-full rounded-lg bg-violet-500/30 px-3 py-1.5 text-xs leading-snug">
+            <strong>Set game</strong> · these four asked to play together
+          </p>
+        )}
         {game.swap && (
-          <p className="rounded-lg bg-white/10 px-3 py-1.5 text-xs leading-snug">
-            <strong>{players.get(game.swap.in)?.name}</strong> swapped in for{' '}
-            <strong>{players.get(game.swap.out)?.name}</strong>
+          <p className="line-clamp-2 w-full rounded-lg bg-white/10 px-3 py-1.5 text-xs leading-snug">
+            <strong>{players.get(game.swap.in)?.name}</strong> in for <strong>{players.get(game.swap.out)?.name}</strong>
             {game.swap.also && (
               <>
                 , <strong>{players.get(game.swap.also.in)?.name}</strong> for{' '}
@@ -180,48 +197,67 @@ function CourtCard({
           </p>
         )}
       </div>
-      {askWinner ? (
-        <div className="space-y-2 bg-white p-3 text-slate-900">
-          <p className="text-center text-sm font-bold text-slate-500">Who won?</p>
-          {(['A', 'B'] as const).map((side) => (
-            <button key={side} className="btn-primary w-full py-2.5" onClick={() => finish(side)}>
-              <span className="truncate">{teamName(side === 'A' ? game.teamA : game.teamB)}</span>
-            </button>
-          ))}
-          <div className="flex gap-2">
-            <button className="btn-ghost flex-1 py-2 text-sm" onClick={() => finish()}>
-              No result
-            </button>
-            <button className="btn-ghost flex-1 py-2 text-sm" onClick={() => setAskWinner(false)}>
-              Back
-            </button>
-          </div>
-        </div>
-      ) : (
-        <div className="space-y-2 bg-white p-3 text-slate-900">
-          <div className="flex flex-wrap items-center justify-between gap-x-2">
-            <span className="text-sm font-medium whitespace-nowrap text-slate-500">New shuttles</span>
-            <Stepper value={game.shuttles} onChange={(n) => addShuttle(game.id, n - game.shuttles)} />
-          </div>
-          <button className="btn-primary w-full" onClick={() => setAskWinner(true)}>
-            End game
-          </button>
-          {fresh && (
+
+      <div className="space-y-2 bg-white p-3 text-slate-900">
+        {askWinner ? (
+          <>
+            <p className="text-center text-sm font-bold text-slate-500">Who won?</p>
+            {(['A', 'B'] as const).map((side) => (
+              <button key={side} className="d-btn d-btn-primary w-full" onClick={() => finish(side)}>
+                <span className="truncate">{teamName(side === 'A' ? game.teamA : game.teamB)}</span>
+              </button>
+            ))}
             <div className="flex gap-2">
-              <button className="btn-ghost flex-1 py-2 text-sm whitespace-nowrap" onClick={repair} title="Try another pairing">
+              <button className="d-btn flex-1" onClick={() => finish()}>
+                No result
+              </button>
+              <button className="d-btn flex-1" onClick={() => setAskWinner(false)}>
+                Back
+              </button>
+            </div>
+          </>
+        ) : (
+          <>
+            {shuttleTypes && shuttleTypes.length > 1 && (
+              <label className="flex items-center justify-between gap-2">
+                <span className="text-sm font-medium text-slate-500">Shuttle</span>
+                <select
+                  className="d-select w-36 font-semibold"
+                  // Older games have no type; they count as the first one.
+                  value={shuttleTypes.some((t) => t.id === game.shuttleType) ? game.shuttleType : shuttleTypes[0].id}
+                  onChange={(e) => setGameShuttleType(game.id, e.target.value)}
+                >
+                  {shuttleTypes.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-sm font-medium whitespace-nowrap text-slate-500">New shuttles</span>
+              <Stepper value={game.shuttles} onChange={(n) => addShuttle(game.id, n - game.shuttles)} />
+            </div>
+            <button className="d-btn d-btn-primary d-btn-lg w-full" onClick={() => setAskWinner(true)}>
+              End game
+            </button>
+            {/* Always takes the same space so the cards stay the same shape. */}
+            <div className={`flex gap-2 ${fresh ? '' : 'invisible'}`}>
+              <button className="d-btn d-btn-sm flex-1" onClick={repair} title="Try another pairing">
                 Re-pair
               </button>
               <button
-                className="btn-ghost flex-1 py-2 text-sm whitespace-nowrap"
+                className="d-btn d-btn-sm flex-1"
                 onClick={() => cancelGame(game.id)}
                 title="Send players back to the front of the queue"
               >
                 Undo
               </button>
             </div>
-          )}
-        </div>
-      )}
+          </>
+        )}
+      </div>
     </div>
   )
 }
@@ -240,7 +276,9 @@ function Team({ pair, players, total }: { pair: Pair; players: Map<string, Playe
           )
         })}
       </div>
-      <span className="text-xs font-semibold opacity-75">Σ {total}</span>
+      <span className="text-xs font-semibold whitespace-nowrap opacity-75" title="Team skill total">
+        Σ {total}
+      </span>
     </div>
   )
 }

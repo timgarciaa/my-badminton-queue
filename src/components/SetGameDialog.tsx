@@ -35,8 +35,8 @@ export function SetGameDialog({ players, onClose }: { players: Map<string, Playe
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-6" onClick={onClose}>
-      <div className="card flex max-h-full w-full max-w-3xl flex-col gap-4 p-5" onClick={(e) => e.stopPropagation()}>
+    <div className="d-modal d-modal-open" role="dialog" aria-modal="true">
+      <div className="d-modal-box flex max-h-[calc(100%-3rem)] w-full max-w-3xl flex-col gap-4">
         <div>
           <h2 className="text-xl font-bold">Set a game</h2>
           <p className="text-sm text-slate-500">
@@ -59,12 +59,13 @@ export function SetGameDialog({ players, onClose }: { players: Map<string, Playe
         <div className="grid min-h-0 grid-cols-[repeat(auto-fill,minmax(9.5rem,1fr))] gap-2 overflow-y-auto">
           {choices.map((p) => {
             const i = picked.indexOf(p.id)
-            const tone = i < 0 ? 'bg-white ring-slate-200' : i < 2 ? 'bg-teal-100 ring-teal-500' : 'bg-amber-100 ring-amber-400'
+            const tone =
+              i < 0 ? 'border-slate-200 bg-white' : i < 2 ? 'border-teal-500 bg-teal-100' : 'border-amber-400 bg-amber-100'
             return (
               <button
                 key={p.id}
                 onClick={() => toggle(p.id)}
-                className={`flex min-h-14 items-center justify-between gap-2 rounded-xl px-3 py-2 text-left font-semibold ring-1 ${tone}`}
+                className={`d-btn h-auto min-h-14 justify-between gap-2 rounded-xl border-2 px-3 py-2 text-left font-semibold ${tone}`}
               >
                 <span className="leading-tight">{p.name}</span>
                 <PlayerTags player={p} />
@@ -72,15 +73,16 @@ export function SetGameDialog({ players, onClose }: { players: Map<string, Playe
             )
           })}
         </div>
-        <div className="flex justify-end gap-3">
-          <button className="btn-ghost" onClick={onClose}>
+        <div className="d-modal-action mt-0">
+          <button className="d-btn" onClick={onClose}>
             Cancel
           </button>
-          <button className="btn-primary" disabled={picked.length !== 4} onClick={save}>
+          <button className="d-btn d-btn-primary" disabled={picked.length !== 4} onClick={save}>
             Set game
           </button>
         </div>
       </div>
+      <button className="d-modal-backdrop" aria-label="Close" onClick={onClose} />
     </div>
   )
 }

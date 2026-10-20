@@ -130,20 +130,18 @@ export function QueuePanel({
   }
 
   return (
-    <div className="card relative flex-1 overflow-y-auto">
+    <div className="d-card relative block flex-1 overflow-y-auto bg-base-100 shadow-sm">
       {next && (
         <section className="border-b-4 border-slate-100 px-2 pt-2 pb-3">
           <div className="flex items-center gap-2 px-1 pb-1.5">
             <h3 className="text-sm font-bold tracking-wide text-teal-700 uppercase">Next game</h3>
             {setNext && (
-              <span className="rounded-full bg-violet-100 px-2 py-0.5 text-xs font-semibold text-violet-700">Set game</span>
+              <span className="d-badge d-badge-secondary d-badge-soft d-badge-sm font-semibold">Set game</span>
             )}
             {manual && (
               <>
-                <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-600">
-                  Set by hand
-                </span>
-                <button className="ml-auto text-sm font-semibold text-teal-700 underline" onClick={clearManual}>
+                <span className="d-badge d-badge-ghost d-badge-sm font-semibold">Set by hand</span>
+                <button className="d-btn d-btn-primary d-btn-soft d-btn-xs ml-auto" onClick={clearManual}>
                   Auto
                 </button>
               </>
@@ -153,7 +151,7 @@ export function QueuePanel({
           <div className="py-1 text-center text-xs font-bold text-slate-400">VS</div>
           <TeamBlock pair={next.teamB} side="B" rowProps={rowProps} />
           {next.swap && (
-            <p className="mt-2 rounded-lg bg-sky-50 px-2.5 py-1.5 text-xs text-sky-800 ring-1 ring-sky-200">
+            <p role="status" className="d-alert d-alert-info d-alert-soft mt-2 block px-2.5 py-1.5 text-xs">
               <strong>{name(next.swap.in)}</strong> moved up for <strong>{name(next.swap.out)}</strong>
               {next.swap.also && (
                 <>
@@ -187,7 +185,7 @@ export function QueuePanel({
       )}
       {setNext && next && (
         <div className="px-3 pt-2">
-          <button className="text-xs font-semibold text-slate-500 underline" onClick={() => removeSetGame(next.set!)}>
+          <button className="d-btn d-btn-ghost d-btn-xs text-slate-500" onClick={() => removeSetGame(next.set!)}>
             Cancel set game
           </button>
         </div>
@@ -211,7 +209,7 @@ export function QueuePanel({
             {resting.map((a) => (
               <li key={a.playerId} className="flex items-center gap-2">
                 <span className="flex-1 truncate text-slate-500">{name(a.playerId)}</span>
-                <button className="btn-ghost h-9 px-3 py-0 text-xs" onClick={() => setResting(a.playerId, false)}>
+                <button className="d-btn d-btn-sm border-slate-200 bg-white" onClick={() => setResting(a.playerId, false)}>
                   Back in queue
                 </button>
               </li>
@@ -269,7 +267,7 @@ function SetGameRow({ game, name, onCancel }: { game: SetGame; name: (id: string
           <div className="text-xs font-bold text-slate-400">VS</div>
           <div>{game.teamB.map(name).join(' & ')}</div>
         </div>
-        <button className="btn-ghost h-9 px-2 py-0 text-xs" onClick={onCancel}>
+        <button className="d-btn d-btn-xs border-violet-200 bg-white" onClick={onCancel}>
           Cancel
         </button>
       </div>
@@ -345,16 +343,26 @@ function QueueRow({
         </div>
       </button>
       {!fixed && (
-        <>
-          <button className="btn-ghost h-9 w-9 p-0" onClick={onUp} disabled={!onUp} aria-label="Move up">
+        <div className="d-join">
+          <button
+            className="d-btn d-btn-sm d-btn-square d-join-item h-9 w-9 border-slate-200 bg-white"
+            onClick={onUp}
+            disabled={!onUp}
+            aria-label="Move up"
+          >
             ↑
           </button>
-          <button className="btn-ghost h-9 w-9 p-0" onClick={onDown} disabled={!onDown} aria-label="Move down">
+          <button
+            className="d-btn d-btn-sm d-btn-square d-join-item h-9 w-9 border-slate-200 bg-white"
+            onClick={onDown}
+            disabled={!onDown}
+            aria-label="Move down"
+          >
             ↓
           </button>
-        </>
+        </div>
       )}
-      <button className="btn-ghost h-9 px-2 py-0 text-xs" onClick={onRest}>
+      <button className="d-btn d-btn-sm h-9 border-slate-200 bg-white" onClick={onRest}>
         Rest
       </button>
     </li>
