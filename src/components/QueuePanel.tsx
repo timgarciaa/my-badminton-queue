@@ -1,6 +1,6 @@
 import { useState, type PointerEvent as ReactPointerEvent } from 'react'
 import { setIds, type PlannedGame } from '../lib/plan'
-import { useStore } from '../store/useStore'
+import { isSkillMatch, useStore } from '../store/useStore'
 import type { GameSwap, Pair, Player, SetGame } from '../types'
 import { EmptyState, PlayerTags } from './ui'
 
@@ -134,18 +134,19 @@ export function QueuePanel({
       {next && (
         <section className="border-b-4 border-slate-100 px-2 pt-2 pb-3">
           <div className="flex items-center gap-2 px-1 pb-1.5">
-            <h3 className="text-sm font-bold tracking-wide text-teal-700 uppercase">Next game</h3>
+            <h3 className="text-sm font-bold tracking-wide whitespace-nowrap text-teal-700 uppercase">Next game</h3>
             {setNext && (
               <span className="d-badge d-badge-secondary d-badge-soft d-badge-sm font-semibold">Set game</span>
             )}
-            {manual && (
-              <>
-                <span className="d-badge d-badge-ghost d-badge-sm font-semibold">Set by hand</span>
-                <button className="d-btn d-btn-primary d-btn-soft d-btn-xs ml-auto" onClick={clearManual}>
+            {manual && <span className="d-badge d-badge-ghost d-badge-sm font-semibold whitespace-nowrap">Set by hand</span>}
+            <div className="ml-auto flex items-center gap-2">
+              {manual && (
+                <button className="d-btn d-btn-primary d-btn-soft d-btn-xs" onClick={clearManual}>
                   Auto
                 </button>
-              </>
-            )}
+              )}
+              <SkillMatchToggle />
+            </div>
           </div>
           <TeamBlock pair={next.teamA} side="A" rowProps={rowProps} />
           <div className="py-1 text-center text-xs font-bold text-slate-400">VS</div>
@@ -366,5 +367,25 @@ function QueueRow({
         Rest
       </button>
     </li>
+  )
+}
+
+/** Off: games ignore skill and only look at fresh partners and new people. */
+function SkillMatchToggle() {
+  const on = useStore((s) => isSkillMatch(s.session))
+  const setSkillMatch = useStore((s) => s.setSkillMatch)
+  return (
+    <label
+      className="flex cursor-pointer items-center gap-1.5 text-xs font-medium whitespace-nowrap text-slate-500"
+      title="On: games are evened out by skill. Off: everyone plays with everyone, whatever their skill."
+    >
+      Match skill
+      <input
+        type="checkbox"
+        className="d-toggle d-toggle-xs d-toggle-primary"
+        checked={on}
+        onChange={(e) => setSkillMatch(e.target.checked)}
+      />
+    </label>
   )
 }

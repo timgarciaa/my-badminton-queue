@@ -1,4 +1,4 @@
-import type { Session } from '../types'
+import type { Game, Session } from '../types'
 
 export interface ShuttleLine {
   id: string
@@ -44,6 +44,70 @@ export function shuttleLines(session: Session): ShuttleLine[] {
 
 export function shuttlesUsed(session: Session): number {
   return shuttleLines(session).reduce((n, l) => n + l.used, 0)
+}
+
+/** The shuttle type a game counts towards; games from before types, or of a removed type, count as the first. */
+export function gameShuttleType(session: Session, game: Game): string | undefined {
+  const types = session.shuttleTypes ?? []
+  return types.some((t) => t.id === game.shuttleType) ? game.shuttleType : types[0]?.id
+}
+
+/** Unopened shuttles of a type: its starting count less those recorded. Unlimited without a starting count. */
+export function shuttlesInStock(session: Session, typeId?: string): number {
+  const type = session.shuttleTypes?.find((t) => t.id === typeId)
+  if (type?.start === undefined) return Infinity
+  const used = shuttleLines(session).find((l) => l.id === typeId)?.used ?? 0
+  return Math.max(0, type.start - used)
+}
+
+/** Started: the timer was started or a game was played. The starting shuttle count is locked from then. */
+export function sessionStarted(session: Session): boolean {
+  return !!session.timer || session.games.length > 0
+}
+
+export interface CountLine {
+  id: string
+  name: string
+  start?: number
+  left?: number
+  /** Start minus left, once both are entered. */
+  used?: number
+  /** Shuttles recorded in games plus adjustments, to check the count against. */
+  recorded: number
+}
+
+export interface ShuttleCount {
+  /** One line per shuttle type. */
+  lines: CountLine[]
+  /** Totals over the types with a starting count; undefined while none has one. */
+  start?: number
+  /** Undefined until every counted type has its count left. */
+  left?: number
+  used?: number
+  recorded: number
+}
+
+/** Shuttles on hand at the start against what's left, per shuttle type. */
+export function shuttleCount(session: Session): ShuttleCount {
+  const recorded = new Map(shuttleLines(session).map((l) => [l.id, l.used]))
+  const lines: CountLine[] = (session.shuttleTypes ?? []).map((t) => ({
+    id: t.id,
+    name: t.name,
+    start: t.start,
+    left: t.left,
+    used: t.start === undefined || t.left === undefined ? undefined : Math.max(0, t.start - t.left),
+    recorded: recorded.get(t.id) ?? 0,
+  }))
+  const counted = lines.filter((l) => l.start !== undefined)
+  const sum = (key: 'start' | 'left' | 'used') =>
+    counted.length && counted.every((l) => l[key] !== undefined) ? counted.reduce((n, l) => n + l[key]!, 0) : undefined
+  return {
+    lines,
+    start: sum('start'),
+    left: sum('left'),
+    used: sum('used'),
+    recorded: counted.reduce((n, l) => n + l.recorded, 0),
+  }
 }
 
 export function costSummary(session: Session, roundTo = 1): CostSummary {

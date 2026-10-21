@@ -51,6 +51,10 @@ export interface ShuttleType {
   price: number
   /** Manual adjustment on top of shuttles counted from games. */
   extra: number
+  /** On hand before the session; locked once it starts. */
+  start?: number
+  /** Left at the end, counted to see how many were used. */
+  left?: number
 }
 
 export interface Game {
@@ -110,6 +114,11 @@ export interface Session {
   winnersStay?: number[]
   /** Winners-stay courts where the winners stay together as a team (beat the winners) instead of splitting up. */
   winnersTogether?: number[]
+  /**
+   * Even out skill when picking and splitting games (on unless false). Off,
+   * games only look at fresh partners and new people, then mixed pairs.
+   */
+  skillMatch?: boolean
   /** Default shuttle type; new games start with it. */
   shuttleTypeId?: string
   attendees: Attendee[]

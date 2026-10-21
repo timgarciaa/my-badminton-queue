@@ -1,5 +1,5 @@
-import { costSummary, money, type ShuttleLine } from '../lib/cost'
-import { useEffect, useState } from 'react'
+import { costSummary, money, sessionStarted, shuttleCount, shuttlesInStock, type ShuttleLine } from '../lib/cost'
+import { Fragment, useEffect, useState } from 'react'
 import { EmptyState, MoneyField, Stepper } from '../components/ui'
 import { usePlayerMap, useStore } from '../store/useStore'
 import type { ShuttleType } from '../types'
@@ -13,6 +13,7 @@ export function CostsPage() {
   const closeSession = useStore((s) => s.closeSession)
   const players = usePlayerMap()
   const [filter, setFilter] = useState<PayFilter>('all')
+  const [ending, setEnding] = useState(false)
 
   const c = costSummary(session)
   const paidCount = session.attendees.filter((a) => a.paid).length
@@ -32,6 +33,7 @@ export function CostsPage() {
           <MoneyField label="Total court fee" value={session.courtFee} onChange={(n) => setField('courtFee', n)} />
         </div>
         <ShuttlesCard lines={c.shuttles} />
+        <ShuttleCountCard />
       </div>
 
       <div className="d-card d-card-border bg-base-100 shadow-sm flex flex-col overflow-hidden">
@@ -58,16 +60,22 @@ export function CostsPage() {
           <button
             className="d-btn d-btn-error d-btn-soft ml-auto"
             disabled={session.attendees.length === 0}
-            onClick={() => {
-              const msg = live
-                ? 'Games are still on court. End them and end this session?'
-                : 'End this session and save it to history?'
-              if (confirm(msg)) closeSession()
-            }}
+            onClick={() => setEnding(true)}
           >
             End session
           </button>
         </div>
+        {ending && (
+          <EndSessionDialog
+            unpaid={session.attendees.filter((a) => !a.paid).map((a) => players.get(a.playerId)?.name ?? '?')}
+            live={live}
+            onCancel={() => setEnding(false)}
+            onEnd={() => {
+              setEnding(false)
+              closeSession()
+            }}
+          />
+        )}
 
         <div className="d-stats rounded-none border-b border-slate-100">
           <div className="d-stat py-3">
@@ -137,6 +145,53 @@ export function CostsPage() {
   )
 }
 
+/** Confirm ending the session, with who still has to pay. */
+function EndSessionDialog({
+  unpaid,
+  live,
+  onCancel,
+  onEnd,
+}: {
+  unpaid: string[]
+  live: boolean
+  onCancel: () => void
+  onEnd: () => void
+}) {
+  return (
+    <div className="d-modal d-modal-open" role="dialog" aria-modal="true" aria-labelledby="end-session-title">
+      <div className="d-modal-box max-w-md space-y-4">
+        <h2 id="end-session-title" className="text-xl font-bold">
+          End session
+        </h2>
+        <p className="text-lg">
+          Are you sure you want to end the session? Is everyone <strong>PAID</strong>?
+        </p>
+        {unpaid.length > 0 ? (
+          <div role="alert" className="d-alert d-alert-warning d-alert-soft block">
+            <strong>{unpaid.length} still to pay:</strong>{' '}
+            {[...unpaid].sort((a, b) => a.localeCompare(b)).join(', ')}
+          </div>
+        ) : (
+          <div role="status" className="d-alert d-alert-success d-alert-soft block">
+            Everyone has paid.
+          </div>
+        )}
+        {live && <p className="text-sm text-slate-500">Games still on court will be ended.</p>}
+        <p className="text-sm text-slate-500">The session is saved to history.</p>
+        <div className="d-modal-action mt-0">
+          <button className="d-btn" onClick={onCancel}>
+            Cancel
+          </button>
+          <button className="d-btn d-btn-error" onClick={onEnd}>
+            End session
+          </button>
+        </div>
+      </div>
+      <button className="d-modal-backdrop" aria-label="Close" onClick={onCancel} />
+    </div>
+  )
+}
+
 /** What each player pays, split into court fee, each shuttle type, and rounding. */
 function PerHeadCard() {
   const session = useStore((s) => s.session)
@@ -188,7 +243,8 @@ function PerHeadCard() {
 
 /** Shuttle types with their prices and counts; tap one to make it the shuttle being opened. */
 function ShuttlesCard({ lines }: { lines: ShuttleLine[] }) {
-  const types = useStore((s) => s.session.shuttleTypes ?? [])
+  const session = useStore((s) => s.session)
+  const types = session.shuttleTypes ?? []
   const inUse = useStore((s) => s.session.shuttleTypeId)
   const add = useStore((s) => s.addShuttleType)
   const update = useStore((s) => s.updateShuttleType)
@@ -241,7 +297,13 @@ function ShuttlesCard({ lines }: { lines: ShuttleLine[] }) {
                 <span className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-slate-400">₱</span>
                 <PriceInput value={t.price} onChange={(n) => update(t.id, { price: n })} />
               </label>
-              <Stepper label="Adjust" value={t.extra} min={-fromGames} onChange={(n) => update(t.id, { extra: n })} />
+              <Stepper
+                label="Adjust"
+                value={t.extra}
+                min={-fromGames}
+                max={Math.min(999, t.extra + shuttlesInStock(session, t.id))}
+                onChange={(n) => update(t.id, { extra: n })}
+              />
             </div>
             <div className="flex items-center justify-between gap-2 text-sm text-slate-600">
               <span>
@@ -261,6 +323,129 @@ function ShuttlesCard({ lines }: { lines: ShuttleLine[] }) {
         )
       })}
     </div>
+  )
+}
+
+/**
+ * Shuttles of each type on hand before the session (locked once it starts),
+ * and what's left at the end, to see how many were used.
+ */
+function ShuttleCountCard() {
+  const session = useStore((s) => s.session)
+  const setStart = useStore((s) => s.setShuttlesStart)
+  const setLeft = useStore((s) => s.setShuttlesLeft)
+  const started = sessionStarted(session)
+  const count = shuttleCount(session)
+  const off = count.used === undefined ? 0 : count.used - count.recorded
+
+  return (
+    <div className="d-card d-card-border bg-base-100 shadow-sm space-y-3 p-5">
+      <h2 className="text-lg font-bold">Shuttle count</h2>
+      <div className="grid grid-cols-[minmax(0,1fr)_4.5rem_4.5rem_2.5rem] items-center gap-x-2 gap-y-2">
+        <span />
+        <span className="flex items-center gap-1 text-sm font-medium text-slate-500">
+          At start
+          {started && (
+            <svg viewBox="0 0 24 24" className="h-3.5 w-3.5 shrink-0" fill="none" stroke="currentColor" strokeWidth={2.5} aria-label="Locked">
+              <path d="M6 11h12v10H6zM8 11V7a4 4 0 018 0v4" />
+            </svg>
+          )}
+        </span>
+        <span className="text-sm font-medium text-slate-500">Left</span>
+        <span className="text-right text-sm font-medium text-slate-500">Used</span>
+        {count.lines.map((l) => (
+          <Fragment key={l.id}>
+            <span className="min-w-0 leading-tight">
+              <span className="block truncate font-semibold">{l.name}</span>
+              {started && l.start !== undefined && l.left === undefined && (
+                <span className={`block text-xs ${l.start > l.recorded ? 'text-slate-500' : 'font-semibold text-amber-700'}`}>
+                  {Math.max(0, l.start - l.recorded)} in stock
+                </span>
+              )}
+            </span>
+            <CountInput
+              label={`${l.name} at start`}
+              value={l.start}
+              disabled={started}
+              onChange={(n) => setStart(l.id, n)}
+            />
+            <CountInput
+              label={`${l.name} left`}
+              value={l.left}
+              max={l.start}
+              disabled={!started || l.start === undefined}
+              onChange={(n) => setLeft(l.id, n)}
+            />
+            <span
+              className={`text-right text-xl font-bold tabular-nums ${l.used !== undefined && l.used !== l.recorded ? 'text-amber-700' : ''}`}
+              title={l.used !== undefined ? `${l.recorded} recorded in games` : undefined}
+            >
+              {l.used ?? '—'}
+            </span>
+          </Fragment>
+        ))}
+        {count.lines.length > 1 && (
+          <>
+            <span className="border-t border-slate-200 pt-2 font-bold">Total</span>
+            <span className="border-t border-slate-200 px-3 pt-2 text-xl font-bold tabular-nums">{count.start ?? '—'}</span>
+            <span className="border-t border-slate-200 px-3 pt-2 text-xl font-bold tabular-nums">{count.left ?? '—'}</span>
+            <span className="border-t border-slate-200 pt-2 text-right text-xl font-bold tabular-nums">{count.used ?? '—'}</span>
+          </>
+        )}
+      </div>
+      {count.used !== undefined ? (
+        <div className="flex items-baseline gap-2 rounded-xl bg-teal-50 px-3 py-2 ring-1 ring-teal-200">
+          <span className="text-sm font-semibold text-teal-900">Used</span>
+          <span className="text-2xl font-black text-teal-900 tabular-nums">{count.used}</span>
+          <span className="ml-auto text-right text-xs text-slate-500">
+            {count.recorded} recorded
+            {off !== 0 && (
+              <span className="block font-semibold text-amber-700">
+                {Math.abs(off)} {off > 0 ? 'more' : 'fewer'} than recorded
+              </span>
+            )}
+          </span>
+        </div>
+      ) : (
+        <p className="text-sm text-slate-500">
+          {!started
+            ? 'Count each type before you start. This locks once the session starts.'
+            : count.start !== undefined
+              ? 'At the end, count what’s left to see how many were used.'
+              : 'No starting count was entered for this session.'}
+        </p>
+      )}
+    </div>
+  )
+}
+
+/** Whole-number input; empty means not entered. */
+function CountInput({
+  label,
+  value,
+  max,
+  disabled,
+  onChange,
+}: {
+  label: string
+  value?: number
+  max?: number
+  disabled?: boolean
+  onChange: (n?: number) => void
+}) {
+  return (
+    <input
+      className="field px-3 py-2 text-xl font-bold tabular-nums disabled:bg-slate-100 disabled:text-slate-500"
+      inputMode="numeric"
+      aria-label={label}
+      placeholder="—"
+      value={value ?? ''}
+      disabled={disabled}
+      onChange={(e) => {
+        const t = e.target.value.replace(/[^0-9]/g, '')
+        onChange(t ? Math.min(Number(t), max ?? Infinity) : undefined)
+      }}
+    />
   )
 }
 

@@ -1,11 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import type { Session } from '../types'
 import { bumpedPlayers, meetCounts, metPairs, pairKey, partnerCounts, splitTeams, suggestSwap } from './balance'
-import { costSummary, money } from './cost'
+import { costSummary, money, sessionStarted, shuttleCount, shuttlesInStock } from './cost'
 import { parseNames } from './importNames'
-import { planGames, winnersStayGame } from './plan'
+import { matchSkill, planGames, winnersStayGame } from './plan'
 import { playerRecords, winRate } from './stats'
 import { dequeue, enqueue, move, nextFour, pushFront, swap } from './queue'
+import { isSkillMatch, newSession, useStore } from '../store/useStore'
 
 const skills: Record<string, number> = { a: 5, b: 4, c: 2, d: 1, e: 3, f: 3, g: 1, h: 1 }
 const skillOf = (id: string) => skills[id]
@@ -385,5 +386,164 @@ describe('cost', () => {
     ])
     expect(c.shuttlesUsed).toBe(6)
     expect(c.total).toBe(120 + 320 + 200)
+  })
+})
+
+describe('shuttle count', () => {
+  const game = (shuttles: number) =>
+    ({ id: `g${shuttles}`, court: 1, teamA: ['a', 'b'], teamB: ['c', 'd'], startedAt: 0, shuttles }) as Session['games'][number]
+
+  it('starts once the timer runs or a game is played', () => {
+    const s = newSession()
+    expect(sessionStarted(s)).toBe(false)
+    expect(sessionStarted({ ...s, timer: { startedAt: 0, minutes: 120 } })).toBe(true)
+    expect(sessionStarted({ ...s, games: [game(1)] })).toBe(true)
+  })
+
+  const typed = (s: Session): Session => ({
+    ...s,
+    shuttleTypes: [
+      { id: 'd', name: 'Dmantis', price: 75, extra: 0 },
+      { id: 'x', name: 'XP2', price: 90, extra: 0 },
+    ],
+    shuttleTypeId: 'd',
+  })
+
+  it('shows used as start minus left per type, next to what games recorded', () => {
+    const s = typed({ ...newSession(), games: [game(1), { ...game(2), shuttleType: 'x' }] })
+    expect(shuttleCount(s)).toMatchObject({ start: undefined, used: undefined, recorded: 0 })
+    const types = (d: object, x: object) => [{ ...s.shuttleTypes![0], ...d }, { ...s.shuttleTypes![1], ...x }]
+    // Only Dmantis counted: totals cover it alone.
+    expect(shuttleCount({ ...s, shuttleTypes: types({ start: 12, left: 10 }, {}) })).toMatchObject({
+      start: 12,
+      left: 10,
+      used: 2,
+      recorded: 1,
+    })
+    // Both counted, XP2 not counted at the end yet: no total used.
+    const c = shuttleCount({ ...s, shuttleTypes: types({ start: 12, left: 10 }, { start: 3 }) })
+    expect(c.lines.map((l) => [l.name, l.start, l.left, l.used, l.recorded])).toEqual([
+      ['Dmantis', 12, 10, 2, 1],
+      ['XP2', 3, undefined, undefined, 2],
+    ])
+    expect(c).toMatchObject({ start: 15, left: undefined, used: undefined, recorded: 3 })
+    expect(shuttleCount({ ...s, shuttleTypes: types({ start: 12, left: 10 }, { start: 3, left: 1 }) })).toMatchObject({
+      start: 15,
+      left: 11,
+      used: 4,
+      recorded: 3,
+    })
+  })
+
+  it('locks the starting counts once the session starts', () => {
+    const st = useStore.getState()
+    st.resetSession()
+    useStore.setState({ session: typed(useStore.getState().session) })
+    const type = (id: string) => useStore.getState().session.shuttleTypes!.find((t) => t.id === id)
+    st.setShuttlesLeft('d', 5) // ignored before the start
+    st.setShuttlesStart('d', 12)
+    st.setShuttlesStart('x', 3)
+    expect(type('d')).toMatchObject({ start: 12, left: undefined })
+    st.startTimer(2)
+    st.setShuttlesStart('d', 30) // locked
+    st.setShuttlesLeft('d', 40) // can't be more than the start
+    st.setShuttlesLeft('x', 1)
+    expect(type('d')).toMatchObject({ start: 12, left: 12 })
+    expect(type('x')).toMatchObject({ start: 3, left: 1 })
+    // Still locked after the timer is stopped, once games have been played.
+    st.startGame(1, ['a', 'b'], ['c', 'd'])
+    st.stopTimer()
+    st.setShuttlesStart('x', 30)
+    expect(type('x')?.start).toBe(3)
+  })
+
+  it("carries what's left over to the next session", () => {
+    const prev = typed(newSession())
+    prev.shuttleTypes = [
+      { ...prev.shuttleTypes![0], start: 12, left: 8 },
+      { ...prev.shuttleTypes![1], start: 3 },
+    ]
+    expect(newSession(prev).shuttleTypes!.map((t) => [t.start, t.left])).toEqual([
+      [8, undefined],
+      [3, undefined],
+    ])
+    expect(newSession().shuttleTypes![0].start).toBeUndefined()
+  })
+
+  it("can't use more of a type than there was at the start", () => {
+    const st = useStore.getState()
+    st.resetSession()
+    useStore.setState({ session: typed(useStore.getState().session) })
+    st.setShuttlesStart('x', 2)
+    st.setShuttlesStart('d', 12)
+    st.setDefaultShuttleType('x')
+    st.startTimer(2)
+    const s = () => useStore.getState().session
+    const type = (id: string) => s().shuttleTypes!.find((t) => t.id === id)!
+
+    st.startGame(1, ['a', 'b'], ['c', 'd']) // first game on court 1 opens an XP2
+    const g1 = s().games[0]
+    expect(g1).toMatchObject({ shuttleType: 'x', shuttles: 1 })
+    st.addShuttle(g1.id, 2) // only one more XP2 left
+    expect(s().games[0].shuttles).toBe(2)
+    expect(shuttlesInStock(s(), 'x')).toBe(0)
+    expect(shuttlesInStock(s(), 'd')).toBe(12)
+
+    st.updateShuttleType('x', { extra: 1 }) // no XP2 left to adjust up
+    expect(type('x').extra).toBe(0)
+
+    // Court 2's first game would open an XP2; there's none, so it opens a Dmantis.
+    st.startGame(2, ['e', 'f'], ['g', 'h'])
+    expect(s().games[1]).toMatchObject({ shuttleType: 'd', shuttles: 1 })
+
+    // Can't switch the Dmantis game to XP2: none in stock.
+    st.setGameShuttleType(s().games[1].id, 'x')
+    expect(s().games[1].shuttleType).toBe('d')
+    // Moving the XP2 game's two shuttles to Dmantis frees the XP2s.
+    st.setGameShuttleType(g1.id, 'd')
+    expect(s().games[0].shuttleType).toBe('d')
+    expect(shuttlesInStock(s(), 'x')).toBe(2)
+    expect(shuttlesInStock(s(), 'd')).toBe(9)
+  })
+
+  it('has no limit for a type without a starting count', () => {
+    expect(shuttlesInStock(typed(newSession()), 'd')).toBe(Infinity)
+  })
+})
+
+describe('skill matching off', () => {
+  const flat = matchSkill(skillOf, false)
+
+  it("doesn't move players up just to even out skill", () => {
+    // Lopsided a(5) d(1) g(1) h(1) would bring b up with skill matching on.
+    expect(planGames(['a', 'd', 'g', 'h', 'b'], skillOf).games[0].swap?.reason).toBe('lopsided')
+    expect(planGames(['a', 'd', 'g', 'h', 'b'], flat).games[0].swap).toBeUndefined()
+  })
+
+  it('still moves players up to avoid a repeat partner', () => {
+    const partners = new Map([
+      ['e|f', 1],
+      ['e|g', 1],
+      ['e|h', 1],
+    ])
+    expect(planGames(['e', 'f', 'g', 'h', 'a'], flat, { partners }).games[0].swap).toMatchObject({ reason: 'repeat' })
+  })
+
+  it('splits teams by fresh partners, then mixed pairs, ignoring skill', () => {
+    // a(5) b(4) c(2) d(1): skill pairs a+d and b+c (6 v 6), both same-gender here.
+    const genders: Record<string, string> = { a: 'M', b: 'F', c: 'F', d: 'M' }
+    const teams = (s: ReturnType<typeof splitTeams>) => [pairKey(s.teamA), pairKey(s.teamB)].sort()
+    const genderOf = (id: string) => genders[id]
+    expect(teams(splitTeams(['a', 'b', 'c', 'd'], skillOf, { genderOf }))).toEqual(['a|d', 'b|c'])
+    const split = splitTeams(['a', 'b', 'c', 'd'], flat, { genderOf })
+    expect(split.repeatedPairs).toEqual([])
+    expect(teams(split)).not.toEqual(['a|d', 'b|c'])
+  })
+
+  it('is on by default and carries over to the next session', () => {
+    expect(isSkillMatch(newSession())).toBe(true)
+    const off = newSession({ ...newSession(), skillMatch: false })
+    expect(isSkillMatch(off)).toBe(false)
+    expect(isSkillMatch(newSession(off))).toBe(false)
   })
 })

@@ -54,6 +54,11 @@ export function winnersStayGame(
   return { teamA, teamB }
 }
 
+/** Skill as matching sees it: with skill matching off, every player counts the same. */
+export function matchSkill(skillOf: (id: string) => number, on: boolean): (id: string) => number {
+  return on ? skillOf : () => 3
+}
+
 /** True when the fixed teams are exactly the first four players in the queue. */
 export function isFirstFour(queue: string[], fixed: { teamA: Pair; teamB: Pair }): boolean {
   const ids = [...fixed.teamA, ...fixed.teamB]

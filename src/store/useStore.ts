@@ -1,6 +1,7 @@
 import { useMemo } from 'react'
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
+import { gameShuttleType, sessionStarted, shuttlesInStock } from '../lib/cost'
 import { heldIds, isSetReady, setIds } from '../lib/plan'
 import { applySwap, dequeue, enqueue, move, pushFront, swap } from '../lib/queue'
 import type { Game, GameSwap, Gender, Pair, Player, Session, SetGame, ShuttleType, Skill } from '../types'
@@ -16,12 +17,13 @@ export function withShuttleTypes(s: Session): Session {
 }
 
 export function newSession(
-  prev?: Pick<Session, 'courtCount' | 'courtFee' | 'shuttlePrice' | 'shuttleTypes' | 'shuttleTypeId'>,
+  prev?: Pick<Session, 'courtCount' | 'courtFee' | 'shuttlePrice' | 'shuttleTypes' | 'shuttleTypeId' | 'skillMatch'>,
 ): Session {
   const courtCount = prev?.courtCount ?? 2
-  // Keep the shuttle types and prices; the counts start again.
+  // Keep the shuttle types and prices; the counts start again, from what was
+  // left last time (or the same starting count, if none was entered).
   const shuttleTypes = prev?.shuttleTypes?.length
-    ? prev.shuttleTypes.map((t) => ({ ...t, extra: 0 }))
+    ? prev.shuttleTypes.map((t) => ({ ...t, extra: 0, start: t.left ?? t.start, left: undefined }))
     : [{ id: uid(), name: 'Shuttle', price: prev?.shuttlePrice ?? 0, extra: 0 }]
   const shuttleTypeId = shuttleTypes.some((t) => t.id === prev?.shuttleTypeId) ? prev!.shuttleTypeId : shuttleTypes[0].id
   return {
@@ -33,6 +35,7 @@ export function newSession(
     extraShuttles: 0,
     shuttleTypes,
     shuttleTypeId,
+    ...(prev?.skillMatch === false && { skillMatch: false }),
     attendees: [],
     queue: [],
     courts: Array(courtCount).fill(null),
@@ -45,6 +48,12 @@ export function newSession(
 export const isWinnersStay = (s: Session, court: number) => Array.isArray(s.winnersStay) && s.winnersStay.includes(court)
 /** Whether a winners-stay court keeps its winners together instead of splitting them up. */
 export const isWinnersTogether = (s: Session, court: number) => !!s.winnersTogether?.includes(court)
+
+/** A whole, non-negative count; undefined when cleared. */
+const count = (n?: number) => (n === undefined || !Number.isFinite(n) ? undefined : Math.max(0, Math.round(n)))
+
+/** Whether games are matched on skill (on unless turned off). */
+export const isSkillMatch = (s: Session) => s.skillMatch !== false
 
 /** Add or remove a court number in a list of courts. */
 const withCourt = (list: unknown, court: number, on: boolean) => {
@@ -64,8 +73,15 @@ function beginGame(
   const number = Math.max(0, ...s.games.map((g, i) => g.number ?? i + 1)) + 1
   // Shuttles are reused, but a court's first game needs a new one.
   const firstOnCourt = !s.games.some((g) => g.court === court)
-  const game: Game = { id: uid(), number, court, teamA, teamB, startedAt: Date.now(), shuttles: firstOnCourt ? 1 : 0 }
-  const type = shuttleType ?? s.shuttleTypeId
+  let type = shuttleType ?? s.shuttleTypeId
+  let shuttles = firstOnCourt ? 1 : 0
+  // None of this type left: open one of the next type that has some, or none.
+  if (shuttles && shuttlesInStock(s, type) < 1) {
+    const other = s.shuttleTypes?.find((t) => shuttlesInStock(s, t.id) >= 1)
+    if (other) type = other.id
+    else shuttles = 0
+  }
+  const game: Game = { id: uid(), number, court, teamA, teamB, startedAt: Date.now(), shuttles }
   if (type) game.shuttleType = type
   if (gameSwap) game.swap = gameSwap
   if (setId) game.set = true
@@ -145,6 +161,10 @@ interface State {
   /** Add or take away booked minutes. */
   adjustTimer: (minutes: number) => void
   stopTimer: () => void
+  /** Shuttles of a type on hand at the start; ignored once the session has started. */
+  setShuttlesStart: (typeId: string, n?: number) => void
+  /** Shuttles of a type left, counted at the end; only once the session has started. */
+  setShuttlesLeft: (typeId: string, n?: number) => void
 
   /** Hold four players for a game together; they play next once all four are free. */
   addSetGame: (teamA: Pair, teamB: Pair) => void
@@ -163,6 +183,8 @@ interface State {
   setWinnersStay: (court: number, on: boolean) => void
   /** On a winners-stay court, split the winners up (default) or keep them together. */
   setWinnersSplit: (court: number, split: boolean) => void
+  /** Turn skill matching on or off for picking and splitting games. */
+  setSkillMatch: (on: boolean) => void
   /** Set or clear the winner of a finished game, in this session or history. */
   setWinner: (gameId: string, winner?: 'A' | 'B') => void
   cancelGame: (gameId: string) => void
@@ -290,7 +312,12 @@ export const useStore = create<State>()(
         updateShuttleType: (id, patch) =>
           updateSession((s) => ({
             ...s,
-            shuttleTypes: s.shuttleTypes?.map((t) => (t.id === id ? { ...t, ...patch } : t)),
+            shuttleTypes: s.shuttleTypes?.map((t) => {
+              if (t.id !== id) return t
+              // Can't adjust up past the shuttles of this type still in stock.
+              const extra = patch.extra === undefined ? t.extra : Math.min(patch.extra, t.extra + shuttlesInStock(s, id))
+              return { ...t, ...patch, extra }
+            }),
           })),
         removeShuttleType: (id) =>
           updateSession((s) => {
@@ -306,10 +333,12 @@ export const useStore = create<State>()(
           }),
         setDefaultShuttleType: (id) => updateSession((s) => ({ ...s, shuttleTypeId: id })),
         setGameShuttleType: (gameId, typeId) =>
-          updateSession((s) => ({
-            ...s,
-            games: s.games.map((g) => (g.id === gameId ? { ...g, shuttleType: typeId } : g)),
-          })),
+          updateSession((s) => {
+            const game = s.games.find((g) => g.id === gameId)
+            // The game's shuttles move to the new type, which must have that many in stock.
+            if (!game || gameShuttleType(s, game) === typeId || shuttlesInStock(s, typeId) < game.shuttles) return s
+            return { ...s, games: s.games.map((g) => (g.id === gameId ? { ...g, shuttleType: typeId } : g)) }
+          }),
 
         startTimer: (hours) =>
           updateSession((s) => ({ ...s, timer: { startedAt: Date.now(), minutes: Math.round(hours * 60) } })),
@@ -318,6 +347,29 @@ export const useStore = create<State>()(
             s.timer ? { ...s, timer: { ...s.timer, minutes: Math.max(30, s.timer.minutes + minutes) } } : s,
           ),
         stopTimer: () => updateSession((s) => ({ ...s, timer: undefined })),
+        setShuttlesStart: (typeId, n) =>
+          updateSession((s) =>
+            sessionStarted(s)
+              ? s
+              : {
+                  ...s,
+                  shuttleTypes: s.shuttleTypes?.map((t) => (t.id === typeId ? { ...t, start: count(n), left: undefined } : t)),
+                },
+          ),
+        setShuttlesLeft: (typeId, n) =>
+          updateSession((s) => {
+            if (!sessionStarted(s)) return s
+            const left = count(n)
+            return {
+              ...s,
+              shuttleTypes: s.shuttleTypes?.map((t) =>
+                // Can't have more left than there were at the start.
+                t.id === typeId && t.start !== undefined
+                  ? { ...t, left: left === undefined ? undefined : Math.min(left, t.start) }
+                  : t,
+              ),
+            }
+          }),
 
         addSetGame: (teamA, teamB) =>
           updateSession((s) => {
@@ -340,7 +392,12 @@ export const useStore = create<State>()(
         addShuttle: (gameId, delta) =>
           updateSession((s) => ({
             ...s,
-            games: s.games.map((g) => (g.id === gameId ? { ...g, shuttles: Math.max(0, g.shuttles + delta) } : g)),
+            games: s.games.map((g) => {
+              if (g.id !== gameId) return g
+              // Only as many as are left of the game's shuttle type.
+              const add = Math.min(delta, shuttlesInStock(s, gameShuttleType(s, g)))
+              return { ...g, shuttles: Math.max(0, g.shuttles + add) }
+            }),
           })),
 
         endGame: (gameId, winner) => updateSession((s) => finishGame(s, gameId, winner)),
@@ -359,6 +416,8 @@ export const useStore = create<State>()(
         setWinnersStay: (court, on) => updateSession((s) => ({ ...s, winnersStay: withCourt(s.winnersStay, court, on) })),
         setWinnersSplit: (court, split) =>
           updateSession((s) => ({ ...s, winnersTogether: withCourt(s.winnersTogether, court, !split) })),
+
+        setSkillMatch: (on) => updateSession((s) => ({ ...s, skillMatch: on })),
 
         setWinner: (gameId, winner) =>
           set((st) => {

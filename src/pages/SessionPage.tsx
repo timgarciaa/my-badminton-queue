@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
 import { allSplits, bumpedPlayers, meetCounts, partnerCounts } from '../lib/balance'
-import { planGames, winnersStayGame } from '../lib/plan'
+import { gameShuttleType, shuttlesInStock } from '../lib/cost'
+import { matchSkill, planGames, winnersStayGame } from '../lib/plan'
 import { QueuePanel } from '../components/QueuePanel'
 import { SetGameDialog } from '../components/SetGameDialog'
 import { PlayerTags, Stepper, elapsed, useNow } from '../components/ui'
 import { gameNumber } from '../lib/stats'
-import { isWinnersStay, isWinnersTogether, usePlayerMap, useStore } from '../store/useStore'
+import { isSkillMatch, isWinnersStay, isWinnersTogether, usePlayerMap, useStore } from '../store/useStore'
 import type { Game, GameSwap, Pair, Player, Session } from '../types'
 
 const SWAP_REASON_SHORT: Record<GameSwap['reason'], string> = {
@@ -50,7 +51,7 @@ function useWidth<T extends HTMLElement>() {
 function planNext(session: Session, players: Map<string, Player>) {
   return planGames(
     session.queue,
-    (id) => players.get(id)?.skill ?? 3,
+    matchSkill((id) => players.get(id)?.skill ?? 3, isSkillMatch(session)),
     {
       partners: partnerCounts(session.games),
       met: meetCounts(session.games),
@@ -166,7 +167,8 @@ function CourtCard({
   const cancelGame = useStore((s) => s.cancelGame)
   const addShuttle = useStore((s) => s.addShuttle)
   const now = useNow()
-  const shuttleTypes = useStore((s) => s.session.shuttleTypes)
+  const session = useStore((s) => s.session)
+  const shuttleTypes = session.shuttleTypes
   const setGameShuttleType = useStore((s) => s.setGameShuttleType)
   const [askWinner, setAskWinner] = useState(false)
   const skillOf = (id: string) => players.get(id)?.skill ?? 3
@@ -183,7 +185,8 @@ function CourtCard({
       const plan = planNext(s, players)
       const waiting = plan.order.filter((id) => !plan.held.includes(id))
       const split = !isWinnersTogether(s, game.court)
-      const next = !resting && winnersStayGame(winners, waiting, skillOf, partnerCounts(s.games), split)
+      const skill = matchSkill(skillOf, isSkillMatch(s))
+      const next = !resting && winnersStayGame(winners, waiting, skill, partnerCounts(s.games), split)
       if (next) return rotateWinners(game.id, winner, next.teamA, next.teamB)
     }
     endGame(game.id, winner)
@@ -314,20 +317,29 @@ function CourtCard({
                 <select
                   className="d-select w-36 min-w-0 font-semibold"
                   // Older games have no type; they count as the first one.
-                  value={shuttleTypes.some((t) => t.id === game.shuttleType) ? game.shuttleType : shuttleTypes[0].id}
+                  value={gameShuttleType(session, game)}
                   onChange={(e) => setGameShuttleType(game.id, e.target.value)}
                 >
-                  {shuttleTypes.map((t) => (
-                    <option key={t.id} value={t.id}>
-                      {t.name}
-                    </option>
-                  ))}
+                  {shuttleTypes.map((t) => {
+                    // The game's shuttles move with it, so the type needs that many in stock.
+                    const out = t.id !== gameShuttleType(session, game) && shuttlesInStock(session, t.id) < game.shuttles
+                    return (
+                      <option key={t.id} value={t.id} disabled={out}>
+                        {t.name}
+                        {out && ' (out)'}
+                      </option>
+                    )
+                  })}
                 </select>
               </label>
             )}
             <div className="flex items-center justify-between gap-2">
               <span className="min-w-0 text-sm leading-tight font-medium text-slate-500">New shuttles</span>
-              <Stepper value={game.shuttles} onChange={(n) => addShuttle(game.id, n - game.shuttles)} />
+              <Stepper
+                value={game.shuttles}
+                max={Math.min(999, game.shuttles + shuttlesInStock(session, gameShuttleType(session, game)))}
+                onChange={(n) => addShuttle(game.id, n - game.shuttles)}
+              />
             </div>
             {/* Game format sits apart from the shuttle settings above. */}
             <WinnersStayToggle court={number} className="w-full justify-between border-t border-slate-100 pt-2" />
