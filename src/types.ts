@@ -105,6 +105,18 @@ export interface SetGame {
   due?: boolean
 }
 
+/** The phone check-in link for a session, while it is open. */
+export interface RemoteCheckin {
+  /** In the link players open. */
+  code: string
+  /** Secret the iPad uses to update the check-in and see who checked in. */
+  key: string
+  /** Four digits players enter before they can check in. */
+  pin: string
+  /** Phone check-ins already dealt with: checked in, added or dismissed. */
+  handled: string[]
+}
+
 export interface Session {
   id: string
   date: string
@@ -152,5 +164,7 @@ export interface Session {
   setGames?: SetGame[]
   /** Booked court time, counted down once the session is started. */
   timer?: { startedAt: number; minutes: number }
+  /** Players can check in on their phones while this is set. */
+  remote?: RemoteCheckin
   status: 'open' | 'closed'
 }

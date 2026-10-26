@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { costSummary, money } from './lib/cost'
+import { useRemoteCheckin, useRemoteStatus } from './lib/remoteCheckin'
 import { SessionTimer } from './components/SessionTimer'
 import { CheckInPage } from './pages/CheckInPage'
 import { CostsPage } from './pages/CostsPage'
@@ -27,6 +28,8 @@ export default function App() {
   const [tab, setTab] = useState<Tab>('session')
   const session = useStore((s) => s.session)
   const c = costSummary(session)
+  const newcomers = useRemoteStatus((s) => s.newcomers.length)
+  useRemoteCheckin()
 
   return (
     <div className="flex h-full flex-col pt-[env(safe-area-inset-top)]">
@@ -62,7 +65,7 @@ export default function App() {
           <button
             key={t.id}
             onClick={() => setTab(t.id)}
-            className={`flex flex-1 flex-col items-center gap-0.5 py-2.5 text-sm font-semibold transition ${
+            className={`relative flex flex-1 flex-col items-center gap-0.5 py-2.5 text-sm font-semibold transition ${
               tab === t.id ? 'text-teal-700' : 'text-slate-400'
             }`}
           >
@@ -70,6 +73,11 @@ export default function App() {
               <path d={t.icon} />
             </svg>
             {t.label}
+            {t.id === 'checkin' && newcomers > 0 && (
+              <span className="d-badge d-badge-sm d-badge-info absolute top-1 left-1/2 ml-2 font-bold" aria-label={`${newcomers} new names`}>
+                {newcomers}
+              </span>
+            )}
           </button>
         ))}
       </nav>

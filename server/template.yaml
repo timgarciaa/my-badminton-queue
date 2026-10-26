@@ -1,0 +1,96 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: MBQ phone check-in (Lambda function URL + DynamoDB). Deploy with server/deploy.sh.
+
+Parameters:
+  AllowOrigin:
+    Type: String
+    Default: https://timgarciaa.github.io
+    Description: Where the app is served from (CORS).
+
+Resources:
+  # One item per open check-in; removed by TTL a day after the iPad last updated it.
+  Table:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - { AttributeName: code, AttributeType: S }
+      KeySchema:
+        - { AttributeName: code, KeyType: HASH }
+      TimeToLiveSpecification:
+        AttributeName: expires
+        Enabled: true
+
+  Role:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: { Service: lambda.amazonaws.com }
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: checkin-table
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: [dynamodb:GetItem, dynamodb:PutItem, dynamodb:UpdateItem, dynamodb:DeleteItem]
+                Resource: !GetAtt Table.Arn
+
+  Function:
+    Type: AWS::Lambda::Function
+    Properties:
+      Runtime: nodejs22.x
+      Architectures: [arm64]
+      Handler: lambda.handler
+      MemorySize: 256
+      Timeout: 10
+      Role: !GetAtt Role.Arn
+      Environment:
+        Variables:
+          TABLE: !Ref Table
+      # Placeholder: deploy.sh uploads the real code (lambda.mjs, checkin.mjs).
+      Code:
+        ZipFile: 'exports.handler = async () => ({ statusCode: 503 })'
+
+  Logs:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${Function}
+      RetentionInDays: 14
+
+  Url:
+    Type: AWS::Lambda::Url
+    Properties:
+      TargetFunctionArn: !Ref Function
+      AuthType: NONE
+      Cors:
+        AllowOrigins: [!Ref AllowOrigin]
+        AllowMethods: [GET, POST, PUT, DELETE]
+        AllowHeaders: [content-type, x-key, x-pin]
+        MaxAge: 3600
+
+  # A public function URL needs both permissions.
+  UrlPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref Function
+      Action: lambda:InvokeFunctionUrl
+      Principal: '*'
+      FunctionUrlAuthType: NONE
+
+  InvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref Function
+      Action: lambda:InvokeFunction
+      Principal: '*'
+      InvokedViaFunctionUrl: true
+
+Outputs:
+  Url:
+    Value: !GetAtt Url.FunctionUrl

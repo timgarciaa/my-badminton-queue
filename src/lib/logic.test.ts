@@ -1011,3 +1011,71 @@ describe('arrivals', () => {
     expect(checkinPlaces(rows)).toEqual([1, 2, 2])
   })
 })
+
+describe('phone check-in', () => {
+  const player = (id: string, name: string) => ({ id, name, skill: 3 as const, active: true, createdAt: 0 })
+  const start = () => {
+    useStore.setState({ players: [player('a', 'Ana'), player('b', 'Ben'), player('c', 'Cy')], session: newSession() })
+    useStore.getState().openRemote('4821')
+  }
+  const st = () => useStore.getState()
+
+  it('opens under a six-character code with its own key', () => {
+    start()
+    expect(st().session.remote).toMatchObject({ code: expect.stringMatching(/^[A-HJ-NP-Z2-9]{6}$/), pin: '4821', handled: [] })
+    expect(st().session.remote!.key.length).toBeGreaterThan(20)
+    st().setRemotePin('0007')
+    expect(st().session.remote!.pin).toBe('0007')
+  })
+
+  it('checks players in at the time they arrived, in arrival order, once', () => {
+    start()
+    st().checkIn('c', 50)
+    st().applyRemote([
+      { id: 'b', at: 100 },
+      { id: 'a', at: 200 },
+      { id: 'c', at: 300 },
+      { id: 'gone', at: 400 },
+    ])
+    expect(st().session.attendees.map((a) => [a.playerId, a.checkedInAt])).toEqual([
+      ['c', 50],
+      ['b', 100],
+      ['a', 200],
+    ])
+    expect(st().session.queue).toEqual(['c', 'b', 'a'])
+    // Checked out by the host: the next poll doesn't bring them back.
+    st().checkOut('a')
+    st().applyRemote([{ id: 'b', at: 100 }, { id: 'a', at: 200 }])
+    expect(st().session.attendees.map((a) => a.playerId)).toEqual(['c', 'b'])
+  })
+
+  it('leaves new names for the host: add, match or dismiss', () => {
+    start()
+    const cara = { id: 'new-1', name: 'Cara', at: 500 }
+    st().applyRemote([cara])
+    expect(st().session.attendees).toHaveLength(0)
+    st().admitNewcomer(cara)
+    const added = st().players.find((p) => p.name === 'Cara')!
+    expect(added).toMatchObject({ skill: 3, active: true })
+    expect(st().session.attendees).toEqual([expect.objectContaining({ playerId: added.id, checkedInAt: 500 })])
+    // Only once.
+    st().admitNewcomer(cara)
+    expect(st().players).toHaveLength(4)
+
+    st().admitNewcomer({ id: 'new-2', name: 'Benny', at: 600 }, 'b')
+    expect(st().session.attendees.map((a) => a.playerId)).toEqual([added.id, 'b'])
+    st().dismissRemote('new-3')
+    expect(st().session.remote!.handled).toEqual(['new-1', added.id, 'new-2', 'b', 'new-3'])
+  })
+
+  it('does nothing once turned off, and ends with the session', () => {
+    start()
+    st().closeRemote()
+    st().applyRemote([{ id: 'a', at: 1 }])
+    expect(st().session.attendees).toHaveLength(0)
+    st().openRemote('1234')
+    st().closeSession()
+    expect(st().session.remote).toBeUndefined()
+    expect(st().history[0].remote).toBeUndefined()
+  })
+})

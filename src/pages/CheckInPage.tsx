@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { PhoneCheckinButton, PhoneIcon, PhoneNewcomers } from '../components/PhoneCheckin'
 import { EmptyState, Initials, PlayerTags } from '../components/ui'
 import { useStore } from '../store/useStore'
 import type { Player } from '../types'
@@ -28,6 +29,7 @@ export function CheckInPage({ onGoToPlayers }: { onGoToPlayers: () => void }) {
   const session = useStore((s) => s.session)
   const checkIn = useStore((s) => s.checkIn)
   const checkOut = useStore((s) => s.checkOut)
+  const byPhone = new Set(useStore((s) => s.session.remote?.handled))
   const [query, setQuery] = useState('')
   const [filter, setFilter] = useState<Filter>('all')
   // Check-in order by default, first to arrive at the top.
@@ -119,7 +121,10 @@ export function CheckInPage({ onGoToPlayers }: { onGoToPlayers: () => void }) {
           <span className="d-badge border-indigo-200 bg-indigo-50 font-semibold text-indigo-800">{males} male</span>
           <span className="d-badge border-pink-200 bg-pink-50 font-semibold text-pink-800">{females} female</span>
         </div>
+        <PhoneCheckinButton />
       </div>
+
+      <PhoneNewcomers />
 
       <section>
         <h2 className="mb-2 text-sm font-bold tracking-wide text-slate-500 uppercase">
@@ -246,7 +251,8 @@ export function CheckInPage({ onGoToPlayers }: { onGoToPlayers: () => void }) {
                         {a.gamesPlayed} {a.gamesPlayed === 1 ? 'game' : 'games'}
                       </span>
                       <span>·</span>
-                      <span title="Checked in">
+                      <span title="Checked in" className="flex items-center gap-0.5">
+                        {byPhone.has(p.id) && <PhoneIcon className="h-3.5 w-3.5" />}
                         {new Date(a.checkedInAt).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}
                       </span>
                     </div>

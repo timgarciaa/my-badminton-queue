@@ -6,6 +6,13 @@ import { heldIds, isSetReady, setIds } from '../lib/plan'
 import { applySwap, dequeue, enqueue, move, pushFront, swap } from '../lib/queue'
 import type { CourtBooking, Game, GameSwap, Gender, Pair, Player, Session, SetGame, ShuttleType, Skill } from '../types'
 
+/** A check-in made on a player's phone; ids starting with new- are names not on the list. */
+export interface PhoneCheckin {
+  id: string
+  name?: string
+  at: number
+}
+
 const uid = () => crypto.randomUUID()
 const today = () => new Date().toLocaleDateString('en-CA')
 
@@ -55,6 +62,22 @@ export function newSession(
     games: [],
     status: 'open',
   }
+}
+
+/** Check a player in (once), at the back of the queue. */
+function addAttendee(s: Session, playerId: string, at: number): Session {
+  if (s.attendees.some((a) => a.playerId === playerId)) return s
+  return {
+    ...s,
+    attendees: [...s.attendees, { playerId, checkedInAt: at, gamesPlayed: 0, paid: false, resting: false }],
+    queue: enqueue(s.queue, [playerId]),
+  }
+}
+
+/** Six letters and digits for the check-in link, without look-alikes (0/O, 1/I). */
+function checkinCode() {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
+  return Array.from(crypto.getRandomValues(new Uint8Array(6)), (b) => chars[b % chars.length]).join('')
 }
 
 /** Whether a court plays winners stay. Ignores the on/off value an early test build saved. */
@@ -151,10 +174,21 @@ interface State {
   updatePlayer: (id: string, patch: Partial<Pick<Player, 'name' | 'skill' | 'gender' | 'active'>>) => void
   deletePlayer: (id: string) => void
 
-  checkIn: (playerId: string) => void
+  /** at: when they arrived, if not now (checked in on their phone). */
+  checkIn: (playerId: string, at?: number) => void
   /** Undo a check-in made by mistake; ignored once the player has played or is on court. */
   checkOut: (playerId: string) => void
   setResting: (playerId: string, resting: boolean) => void
+  /** Open phone check-in for this session under a new code, with a PIN. */
+  openRemote: (pin: string) => void
+  setRemotePin: (pin: string) => void
+  closeRemote: () => void
+  /** Check in players who checked in on their phones; new names wait for admitNewcomer. */
+  applyRemote: (checkins: PhoneCheckin[]) => void
+  /** Add a new name from a phone as a player (or as an existing one) and check them in. */
+  admitNewcomer: (checkin: PhoneCheckin, existingId?: string) => void
+  /** Ignore a phone check-in. */
+  dismissRemote: (id: string) => void
   togglePaid: (playerId: string) => void
   moveInQueue: (playerId: string, delta: number) => void
   /**
@@ -261,19 +295,7 @@ export const useStore = create<State>()(
 
         deletePlayer: (id) => set((st) => ({ players: st.players.filter((p) => p.id !== id) })),
 
-        checkIn: (playerId) =>
-          updateSession((s) =>
-            s.attendees.some((a) => a.playerId === playerId)
-              ? s
-              : {
-                  ...s,
-                  attendees: [
-                    ...s.attendees,
-                    { playerId, checkedInAt: Date.now(), gamesPlayed: 0, paid: false, resting: false },
-                  ],
-                  queue: enqueue(s.queue, [playerId]),
-                },
-          ),
+        checkIn: (playerId, at) => updateSession((s) => addAttendee(s, playerId, at ?? Date.now())),
 
         checkOut: (playerId) =>
           updateSession((s) => {
@@ -288,6 +310,44 @@ export const useStore = create<State>()(
               setGames: s.setGames?.filter((g) => !setIds(g).includes(playerId)),
             }
           }),
+
+        openRemote: (pin) =>
+          updateSession((s) => ({ ...s, remote: { code: checkinCode(), key: uid(), pin, handled: [] } })),
+
+        setRemotePin: (pin) => updateSession((s) => (s.remote ? { ...s, remote: { ...s.remote, pin } } : s)),
+
+        closeRemote: () => updateSession((s) => ({ ...s, remote: undefined })),
+
+        applyRemote: (checkins) =>
+          set((st) => {
+            const remote = st.session.remote
+            if (!remote) return st
+            const known = new Set(st.players.map((p) => p.id))
+            const fresh = checkins.filter((c) => known.has(c.id) && !remote.handled.includes(c.id))
+            if (fresh.length === 0) return st
+            let s = st.session
+            for (const c of fresh) s = addAttendee(s, c.id, c.at)
+            return { session: { ...s, remote: { ...remote, handled: [...remote.handled, ...fresh.map((c) => c.id)] } } }
+          }),
+
+        admitNewcomer: (checkin, existingId) =>
+          set((st) => {
+            const remote = st.session.remote
+            if (!remote || remote.handled.includes(checkin.id)) return st
+            const player: Player | undefined = existingId
+              ? undefined
+              : { id: uid(), name: checkin.name ?? 'Guest', skill: 3, active: true, createdAt: Date.now() }
+            const id = existingId ?? player!.id
+            const s = addAttendee(st.session, id, checkin.at)
+            // The player's id too: they checked in by phone.
+            return {
+              players: player ? [...st.players, player] : st.players,
+              session: { ...s, remote: { ...remote, handled: [...remote.handled, checkin.id, id] } },
+            }
+          }),
+
+        dismissRemote: (id) =>
+          updateSession((s) => (s.remote ? { ...s, remote: { ...s.remote, handled: [...s.remote.handled, id] } } : s)),
 
         setResting: (playerId, resting) =>
           updateSession((s) => {
@@ -533,6 +593,7 @@ export const useStore = create<State>()(
               games: st.session.games.map((g) => (g.endedAt ? g : { ...g, endedAt: now })),
               courts: st.session.courts.map(() => null),
               queue: [],
+              remote: undefined,
             }
             return { history: [closed, ...st.history], session: newSession(st.session) }
           }),
