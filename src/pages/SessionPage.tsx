@@ -5,8 +5,8 @@ import { matchSkill, planGames, winnersStayGame } from '../lib/plan'
 import { QueuePanel } from '../components/QueuePanel'
 import { SetGameDialog } from '../components/SetGameDialog'
 import { PlayerTags, Stepper, elapsed, useNow } from '../components/ui'
-import { gameNumber } from '../lib/stats'
-import { isSkillMatch, isWinnersStay, isWinnersTogether, usePlayerMap, useStore } from '../store/useStore'
+import { gameNumber, helpFrom, playedGames, sessionsWithin } from '../lib/stats'
+import { isHelpStruggling, isSkillMatch, isWinnersStay, isWinnersTogether, usePlayerMap, useStore } from '../store/useStore'
 import type { Game, GameSwap, Pair, Player, Session } from '../types'
 
 const SWAP_REASON_SHORT: Record<GameSwap['reason'], string> = {
@@ -47,8 +47,12 @@ function useWidth<T extends HTMLElement>() {
   return [ref, width] as const
 }
 
-/** Plan the next game exactly as the queue shows it and Next game starts it. */
-function planNext(session: Session, players: Map<string, Player>) {
+/**
+ * Plan the next game exactly as the queue shows it and Next game starts it.
+ * Help for struggling players looks at the last 3 months, today included.
+ */
+function planNext(session: Session, players: Map<string, Player>, history: Session[]) {
+  const help = isHelpStruggling(session) ? helpFrom(playedGames(sessionsWithin([session, ...history], 3))) : undefined
   return planGames(
     session.queue,
     matchSkill((id) => players.get(id)?.skill ?? 3, isSkillMatch(session)),
@@ -60,6 +64,7 @@ function planNext(session: Session, players: Map<string, Player>) {
       locked: bumpedPlayers(session.games),
       fixed: session.nextTeams,
       sets: session.setGames,
+      help,
     },
     1,
   )
@@ -71,7 +76,8 @@ export function SessionPage({ onGoToCheckIn }: { onGoToCheckIn: () => void }) {
   const players = usePlayerMap()
   const [setting, setSetting] = useState(false)
 
-  const plan = planNext(session, players)
+  const history = useStore((s) => s.history)
+  const plan = planNext(session, players, history)
   const started = !!session.timer
 
   // Courts that don't fit at full size fold into narrow strips (an accordion),
@@ -174,7 +180,7 @@ function CourtCard({
   const skillOf = (id: string) => players.get(id)?.skill ?? 3
   const teamName = (t: Pair) => t.map((id) => players.get(id)?.name ?? '?').join(' & ')
 
-  const finish = (winner?: 'A' | 'B') => {
+  const finish = (winner?: 'A' | 'B', outOfHours = false) => {
     setAskWinner(false)
     if (!game) return
     const s = useStore.getState().session
@@ -182,19 +188,20 @@ function CourtCard({
       // Winners stay on, split up, each with one of the next two in line.
       const winners = winner === 'A' ? game.teamA : game.teamB
       const resting = winners.some((id) => s.attendees.find((a) => a.playerId === id)?.resting)
-      const plan = planNext(s, players)
+      const plan = planNext(s, players, useStore.getState().history)
       const waiting = plan.order.filter((id) => !plan.held.includes(id))
       const split = !isWinnersTogether(s, game.court)
       const skill = matchSkill(skillOf, isSkillMatch(s))
       const next = !resting && winnersStayGame(winners, waiting, skill, partnerCounts(s.games), split)
       if (next) return rotateWinners(game.id, winner, next.teamA, next.teamB)
     }
-    endGame(game.id, winner)
+    endGame(game.id, winner, outOfHours)
   }
 
   const start = () => {
     // Same plan the queue previews, including any automatic swap or manual teams.
-    const [next] = planNext(useStore.getState().session, players).games
+    const { session: current, history } = useStore.getState()
+    const [next] = planNext(current, players, history).games
     if (next) startGame(number, next.teamA, next.teamB, next.swap, next.set)
   }
 
@@ -232,12 +239,14 @@ function CourtCard({
 
   const total = (t: Pair) => t.reduce((n, id) => n + skillOf(id), 0)
   const fresh = now - game.startedAt < 2 * 60_000
+  const timer = session.timer
+  const timeUp = !!timer && now >= timer.startedAt + timer.minutes * 60_000
 
   return (
-    <div className="d-card overflow-hidden bg-gradient-to-b from-emerald-600 to-emerald-700 text-white shadow-sm">
+    <div className="d-card relative overflow-hidden bg-gradient-to-b from-emerald-600 to-emerald-700 text-white shadow-sm">
       <div className="flex h-12 items-center justify-between gap-2 px-4">
         <span className="flex min-w-0 items-center gap-1.5">
-          <span className="text-sm font-semibold tracking-wide whitespace-nowrap uppercase opacity-80">Court {number}</span>
+          <MoveCourt game={game} number={number} />
           <span className="d-badge border-0 bg-white/20 font-black text-white">Game {gameNo}</span>
         </span>
         <span className="font-mono text-sm font-semibold tabular-nums opacity-90">{elapsed(game.startedAt, now)}</span>
@@ -300,14 +309,21 @@ function CourtCard({
                 <span className="truncate">{teamName(side === 'A' ? game.teamA : game.teamB)}</span>
               </button>
             ))}
-            <div className="flex gap-2">
-              <button className="d-btn flex-1" onClick={() => finish()}>
+            <div className="grid grid-cols-2 gap-2">
+              <button className="d-btn" onClick={() => finish()}>
                 No result
               </button>
-              <button className="d-btn flex-1" onClick={() => setAskWinner(false)}>
-                Back
+              <button
+                className={`d-btn ${timeUp ? 'd-btn-warning' : ''}`}
+                onClick={() => finish(undefined, true)}
+                title="The game didn't finish because the court time ran out"
+              >
+                Out of hours
               </button>
             </div>
+            <button className="d-btn d-btn-ghost d-btn-sm w-full" onClick={() => setAskWinner(false)}>
+              Back
+            </button>
           </>
         ) : (
           <>
@@ -433,6 +449,66 @@ function FlyingShuttle() {
         <path d="M7.6 19h4.8v3.5a2.4 2.4 0 0 1-4.8 0z" fill="#fef3c7" />
       </svg>
     </div>
+  )
+}
+
+/**
+ * The court label on a game in progress. Tap it to move the game to another
+ * court when players went to the wrong one; a game already there swaps over.
+ */
+function MoveCourt({ game, number }: { game: Game; number: number }) {
+  const session = useStore((s) => s.session)
+  const moveGame = useStore((s) => s.moveGame)
+  const [open, setOpen] = useState(false)
+  const label = 'text-sm font-semibold tracking-wide whitespace-nowrap uppercase'
+  if (session.courts.length < 2) return <span className={`${label} opacity-80`}>Court {number}</span>
+
+  return (
+    <>
+      <button
+        className={`${label} -ml-2 flex h-10 items-center gap-1.5 rounded-lg bg-white/15 px-2 ring-1 ring-white/25 active:bg-white/30`}
+        onClick={() => setOpen((o) => !o)}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-label={`Court ${number}: move this game to another court`}
+        title="Move this game to another court"
+      >
+        Court {number}
+        <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+          <path d="M4 8h15l-4-4M20 16H5l4 4" />
+        </svg>
+      </button>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
+          {/* Spans the card, so it fits however narrow the court is. */}
+          <div role="menu" className="d-card absolute inset-x-2 top-12 z-50 bg-base-100 p-2 text-slate-900 shadow-lg">
+            <p className="px-2 pt-1 pb-1.5 text-xs font-semibold text-slate-500">Move this game to</p>
+            {session.courts.map((id, i) => {
+              const court = i + 1
+              if (court === number) return null
+              const there = id ? session.games.find((g) => g.id === id) : undefined
+              return (
+                <button
+                  key={court}
+                  role="menuitem"
+                  className="flex min-h-12 w-full items-center gap-2 rounded-lg px-2 text-left active:bg-slate-200"
+                  onClick={() => {
+                    moveGame(game.id, court)
+                    setOpen(false)
+                  }}
+                >
+                  <span className="font-bold whitespace-nowrap">Court {court}</span>
+                  <span className="ml-auto text-right text-sm text-slate-500">
+                    {there ? `Swap with Game ${gameNumber(session.games, there)}` : 'Free'}
+                  </span>
+                </button>
+              )
+            })}
+          </div>
+        </>
+      )}
+    </>
   )
 }
 

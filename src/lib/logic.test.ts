@@ -1,12 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import type { Session } from '../types'
 import { bumpedPlayers, meetCounts, metPairs, pairKey, partnerCounts, splitTeams, suggestSwap } from './balance'
-import { costSummary, money, sessionStarted, shuttleCount, shuttlesInStock } from './cost'
+import { costSummary, courtBooking, money, sessionStarted, shuttleCount, shuttlesInStock } from './cost'
+import type { Help } from './balance'
 import { parseNames } from './importNames'
 import { matchSkill, planGames, winnersStayGame } from './plan'
-import { playerRecords, winRate } from './stats'
+import { bestRecord, duoRecords, gameExtremes, gameTime, helpFrom, ordinal, places, playedGames, sessionsWithin, standings, playerRecords, rivalries, streaks, winRate, worstRecord } from './stats'
 import { dequeue, enqueue, move, nextFour, pushFront, swap } from './queue'
-import { isSkillMatch, newSession, useStore } from '../store/useStore'
+import { isHelpStruggling, isSkillMatch, newSession, useStore } from '../store/useStore'
 
 const skills: Record<string, number> = { a: 5, b: 4, c: 2, d: 1, e: 3, f: 3, g: 1, h: 1 }
 const skillOf = (id: string) => skills[id]
@@ -545,5 +546,413 @@ describe('skill matching off', () => {
     const off = newSession({ ...newSession(), skillMatch: false })
     expect(isSkillMatch(off)).toBe(false)
     expect(isSkillMatch(newSession(off))).toBe(false)
+  })
+})
+
+describe('moving a game to another court', () => {
+  const ids = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l']
+  const setup = () => {
+    const st = useStore.getState()
+    // A fresh session: earlier tests leave shuttle stock behind.
+    useStore.setState({ session: newSession() })
+    st.setCourtCount(3)
+    ids.forEach((id) => st.checkIn(id))
+    st.startTimer(2)
+    st.startGame(1, ['a', 'b'], ['c', 'd'])
+    st.startGame(2, ['e', 'f'], ['g', 'h'])
+    return st
+  }
+  const s = () => useStore.getState().session
+  const gameOn = (court: number) => s().games.find((g) => g.id === s().courts[court - 1])
+
+  it('swaps two games, keeping players, teams and shuttles', () => {
+    const st = setup()
+    const [g1, g2] = s().games
+    st.addShuttle(g1.id, 1)
+    const queue = s().queue
+    st.moveGame(g1.id, 2)
+    expect(gameOn(1)).toMatchObject({ id: g2.id, court: 1, teamA: ['e', 'f'], teamB: ['g', 'h'], shuttles: 1 })
+    expect(gameOn(2)).toMatchObject({ id: g1.id, court: 2, teamA: ['a', 'b'], teamB: ['c', 'd'], shuttles: 2 })
+    expect(s().queue).toEqual(queue)
+    expect(s().games.map((g) => g.number)).toEqual([1, 2])
+  })
+
+  it('moves a game to a free court', () => {
+    const st = setup()
+    const g1 = s().games[0]
+    st.moveGame(g1.id, 3)
+    expect(s().courts).toEqual([null, s().games[1].id, g1.id])
+    expect(gameOn(3)?.court).toBe(3)
+  })
+
+  it('ignores finished games, the same court and courts that do not exist', () => {
+    const st = setup()
+    const [g1, g2] = s().games
+    const before = s()
+    st.moveGame(g1.id, 1)
+    st.moveGame(g1.id, 4)
+    st.moveGame(g1.id, 0)
+    st.moveGame('nope', 3)
+    expect(s()).toBe(before)
+    st.endGame(g2.id, 'A')
+    st.moveGame(g2.id, 3)
+    expect(s().games[1].court).toBe(2)
+  })
+
+  it('keeps stats and costs the same, and records the court the game was really on', () => {
+    const st = setup()
+    const [g1, g2] = s().games
+    const cost = costSummary(s())
+    st.moveGame(g1.id, 2)
+    st.endGame(g1.id, 'A')
+    st.endGame(g2.id, 'B')
+    const after = useStore.getState().session
+    expect(after.games.find((g) => g.id === g1.id)?.court).toBe(2)
+    expect(after.courts).toEqual([null, null, null])
+    expect(costSummary(after)).toEqual(cost)
+    expect(playerRecords(after.games).get('a')).toEqual({ played: 1, wins: 1, losses: 0 })
+    expect(playerRecords(after.games).get('e')).toEqual({ played: 1, wins: 0, losses: 1 })
+    expect(after.attendees.find((a) => a.playerId === 'a')?.gamesPlayed).toBe(1)
+  })
+
+  it('opens a new shuttle on a court the moved game left empty', () => {
+    // The shuttle goes with the players, so the court they left has none.
+    const st = setup()
+    st.moveGame(s().games[0].id, 3)
+    st.startGame(1, ['i', 'j'], ['k', 'l'])
+    expect(gameOn(1)?.shuttles).toBe(1)
+  })
+
+  it('keeps winners stay on the court the game moved to', () => {
+    const st = setup()
+    const g1 = s().games[0]
+    st.moveGame(g1.id, 3)
+    st.rotateWinners(g1.id, 'A', ['a', 'i'], ['b', 'j'])
+    expect(gameOn(3)).toMatchObject({ court: 3, teamA: ['a', 'i'], teamB: ['b', 'j'], stayed: ['a', 'b'] })
+    expect(gameOn(1)).toBeUndefined()
+  })
+})
+
+describe('court fee from the booking', () => {
+  it('works out the fee as courts × hours × rate, as each changes', () => {
+    const st = useStore.getState()
+    useStore.setState({ session: newSession() })
+    st.setCourtBooking({ courts: 3, hours: 2, rate: 400 })
+    expect(useStore.getState().session.courtFee).toBe(2400)
+    st.setCourtBooking({ hours: 1.5 })
+    expect(useStore.getState().session).toMatchObject({ courtFee: 1800, courtBooking: { courts: 3, hours: 1.5, rate: 400 } })
+    st.setCourtBooking({ rate: 333.33 })
+    expect(useStore.getState().session.courtFee).toBe(1499.99)
+    expect(costSummary(useStore.getState().session).total).toBe(1499.99)
+  })
+
+  it('starts from the court count and 2 hours, or shows an old total as one court for an hour', () => {
+    const s = { ...newSession(), courtCount: 3 }
+    expect(courtBooking(s)).toEqual({ courts: 3, hours: 2, rate: 0 })
+    expect(courtBooking({ ...s, courtFee: 1860 })).toEqual({ courts: 1, hours: 1, rate: 1860 })
+  })
+
+  it('keeps the booking for the next session', () => {
+    const prev = { ...newSession(), courtFee: 2400, courtBooking: { courts: 3, hours: 2, rate: 400 } }
+    expect(newSession(prev)).toMatchObject({ courtFee: 2400, courtBooking: { courts: 3, hours: 2, rate: 400 } })
+  })
+})
+
+describe('stats dashboard', () => {
+  let t = 0
+  const g = (teamA: string, teamB: string, winner?: 'A' | 'B') =>
+    ({
+      id: `g${++t}`,
+      court: 1,
+      teamA: teamA.split(''),
+      teamB: teamB.split(''),
+      startedAt: t * 1000,
+      endedAt: t * 1000 + 600,
+      shuttles: 0,
+      winner,
+    }) as Session['games'][number]
+  // ab: 3-0 together; cd: 0-2; ef: 1-1 and a game with no result.
+  const games = [g('ab', 'cd', 'A'), g('ab', 'ef', 'A'), g('ab', 'cd', 'A'), g('ef', 'gh', 'A'), g('ac', 'bd', 'B'), g('ef', 'gh')]
+
+  it('records each duo on the same team', () => {
+    const ab = duoRecords(games).find((d) => d.pair.join() === 'a,b')
+    expect(ab).toMatchObject({ played: 3, wins: 3, losses: 0 })
+    expect(duoRecords(games).find((d) => d.pair.join() === 'c,d')).toMatchObject({ played: 2, wins: 0, losses: 2 })
+    // A game without a result counts as played only.
+    expect(duoRecords(games).find((d) => d.pair.join() === 'e,f')).toMatchObject({ played: 3, wins: 1, losses: 1 })
+  })
+
+  it('names the unbeatable and worst duos, needing 2 decided games when anyone has them', () => {
+    const duos = duoRecords(games)
+    expect(bestRecord(duos)?.pair).toEqual(['a', 'b'])
+    expect(worstRecord(duos)?.pair).toEqual(['c', 'd'])
+    // One game each (a single session rarely repeats a pair): 1 game qualifies.
+    const once = duoRecords([g('ab', 'cd', 'A')])
+    expect(bestRecord(once)?.pair).toEqual(['a', 'b'])
+    expect(worstRecord(once)?.pair).toEqual(['c', 'd'])
+    // No results yet: no awards.
+    expect(bestRecord(duoRecords([g('ab', 'cd')]))).toBeUndefined()
+    expect(worstRecord(duoRecords([g('ab', 'cd')]))).toBeUndefined()
+  })
+
+  it('tracks win and losing streaks in play order, skipping games with no result', () => {
+    const runs = streaks([...games].reverse()) // order comes from start time
+    expect(runs.get('a')).toEqual({ wins: 3, losses: 1, current: -1 })
+    expect(runs.get('b')).toEqual({ wins: 4, losses: 0, current: 4 })
+    expect(runs.get('c')).toEqual({ wins: 0, losses: 3, current: -3 })
+    expect(runs.get('e')).toEqual({ wins: 1, losses: 1, current: 1 })
+  })
+
+  it('finds the biggest rivalry, with head-to-head wins', () => {
+    // a v d and b v c both met 3 times; a v d (2-1) is closer than b v c (3-0).
+    const [top, next] = rivalries(games)
+    expect(top).toEqual({ pair: ['a', 'd'], met: 3, wins: [2, 1] })
+    expect(next).toEqual({ pair: ['b', 'c'], met: 3, wins: [3, 0] })
+  })
+
+  it('takes finished games from the chosen sessions in play order', () => {
+    const s1 = { ...newSession(), games: [games[2], games[0]] }
+    const s2 = { ...newSession(), games: [games[1], { ...games[3], endedAt: undefined }] }
+    expect(playedGames([s1, s2]).map((x) => x.id)).toEqual([games[0].id, games[1].id, games[2].id])
+  })
+
+  it('finds the longest and shortest games, ignoring ones ended within a minute', () => {
+    const timed = (id: string, ms: number, endedAt = true) =>
+      ({ ...g('ab', 'cd', 'A'), id, startedAt: 0, endedAt: endedAt ? ms : undefined }) as Session['games'][number]
+    const list = [timed('mid', 15 * 60_000), timed('long', 32 * 60_000 + 5000), timed('short', 4 * 60_000), timed('oops', 20_000), timed('on', 60 * 60_000, false)]
+    const { longest, shortest } = gameExtremes(list)
+    expect(longest?.id).toBe('long')
+    expect(shortest?.id).toBe('short')
+    expect(gameTime(longest!)).toBe('32:05')
+    expect(gameExtremes([timed('oops', 20_000)])).toMatchObject({ longest: { id: 'oops' }, shortest: undefined })
+  })
+
+  it('ranks standings by wins, then win rate, then fewest games', () => {
+    const rows = standings(games)
+    expect(rows.slice(0, 2).map((r) => [r.id, r.wins, r.losses])).toEqual([
+      ['b', 4, 0],
+      ['a', 3, 1],
+    ])
+    expect(rows.find((r) => r.id === 'e')).toMatchObject({ played: 3, wins: 1, losses: 1, rate: 0.5 })
+    // No wins and a 0% rate either way: fewer games ranks higher (g: 0-1 in 2 games, c: 0-3 in 3).
+    const order = rows.map((r) => r.id)
+    expect(order.indexOf('g')).toBeLessThan(order.indexOf('c'))
+  })
+
+  it('gives tied players the same place, then the next place', () => {
+    const r = (wins: number, losses: number, played = wins + losses) => ({ wins, losses, played })
+    // Two tied 1st, then 2nd, three tied 3rd (one with a no-result game), then 4th.
+    expect(places([r(3, 0), r(3, 0), r(2, 1), r(1, 2), r(1, 2), r(1, 2, 4), r(0, 3)])).toEqual([1, 1, 2, 3, 3, 3, 4])
+    // Same win rate but different wins is not a tie.
+    expect(places([r(2, 2), r(1, 1)])).toEqual([1, 2])
+    expect(places([])).toEqual([])
+    expect(places(standings(games))[0]).toBe(1)
+  })
+
+  it('writes places as 1st, 2nd, 3rd, 4th, 11th, 12th, 13th, 21st, 22nd', () => {
+    expect([1, 2, 3, 4, 11, 12, 13, 21, 22, 101, 111].map(ordinal)).toEqual([
+      '1st', '2nd', '3rd', '4th', '11th', '12th', '13th', '21st', '22nd', '101st', '111th',
+    ])
+  })
+
+  it('keeps sessions from the last 3 months', () => {
+    const on = (date: string) => ({ ...newSession(), id: date, date })
+    const all = ['2026-10-26', '2026-07-26', '2026-07-25', '2025-12-01'].map(on)
+    const ids = (today: Date) => sessionsWithin(all, 3, today).map((s) => s.id)
+    expect(ids(new Date(2026, 9, 26))).toEqual(['2026-10-26', '2026-07-26'])
+    // 31 May goes back to the end of February, not into March.
+    const may = ['2026-05-31', '2026-02-28', '2026-02-27', '2026-03-01'].map(on)
+    expect(sessionsWithin(may, 3, new Date(2026, 4, 31)).map((s) => s.id)).toEqual(['2026-05-31', '2026-02-28', '2026-03-01'])
+    // Across the new year: 15 Feb goes back to 15 Nov.
+    const nov = ['2025-11-15', '2025-11-14'].map(on)
+    expect(sessionsWithin(nov, 3, new Date(2026, 1, 15)).map((s) => s.id)).toEqual(['2025-11-15'])
+  })
+})
+
+describe('helping players without a win', () => {
+  let t = 0
+  const game = (teamA: string, teamB: string, winner?: 'A' | 'B') =>
+    ({
+      id: `h${++t}`,
+      court: 1,
+      teamA: teamA.split(''),
+      teamB: teamB.split(''),
+      startedAt: t * 1000,
+      endedAt: t * 1000 + 500,
+      shuttles: 0,
+      winner,
+    }) as Session['games'][number]
+  const help = (struggling: string[], streak: Record<string, number>): Help => ({
+    struggling: new Set(struggling),
+    streak: new Map(Object.entries(streak)),
+  })
+
+  it('finds players who lost their last 5 decided games, and current win streaks', () => {
+    // s loses 5 in a row (a game with no result in between is skipped); w wins the last 3.
+    const games = [
+      game('sx', 'wy', 'A'),
+      game('sx', 'wy', 'B'),
+      game('sx', 'wy', 'B'),
+      game('sx', 'wy'),
+      game('sx', 'wy', 'B'),
+      game('sx', 'wy', 'B'),
+      game('sz', 'wy', 'B'),
+    ]
+    const h = helpFrom(games)
+    expect([...h.struggling]).toEqual(['s'])
+    expect(h.streak.get('w')).toBe(5)
+    expect(h.streak.has('s')).toBe(false)
+    // 4 losses in a row is not enough.
+    expect(helpFrom(games.slice(0, 6)).struggling.has('s')).toBe(false)
+    // A win ends it.
+    expect(helpFrom([...games, game('sw', 'xy', 'A')]).struggling.has('s')).toBe(false)
+  })
+
+  it('partners a struggling player with the player on the best win streak, over even skill', () => {
+    // a(5) b(4) c(2) d(1): skill alone pairs a+d, b+c. d is struggling, b is on 3 wins, a on 1.
+    const split = splitTeams(['a', 'b', 'c', 'd'], skillOf, { help: help(['d'], { a: 1, b: 3 }) })
+    expect([pairKey(split.teamA), pairKey(split.teamB)].sort()).toEqual(['a|c', 'b|d'])
+    expect(split.helped).toEqual({ player: 'd', partner: 'b', streak: 3 })
+    // No one on a streak, or nobody struggling: skill decides as before.
+    for (const h of [help(['d'], {}), help([], { b: 3 })]) {
+      const s = splitTeams(['a', 'b', 'c', 'd'], skillOf, { help: h })
+      expect([pairKey(s.teamA), pairKey(s.teamB)].sort()).toEqual(['a|d', 'b|c'])
+      expect(s.helped).toBeUndefined()
+    }
+  })
+
+  it('never repeats a partner to help', () => {
+    const split = splitTeams(['a', 'b', 'c', 'd'], skillOf, {
+      help: help(['d'], { b: 3 }),
+      partners: new Map([['b|d', 1]]),
+    })
+    expect(split.repeats).toBe(0)
+    expect(split.helped).toBeUndefined()
+  })
+
+  it('leaves the queue order and swaps alone, only choosing partners', () => {
+    // Lopsided: b moves up for d with or without help; g, still in the four, is helped.
+    const queue = ['a', 'd', 'g', 'h', 'b']
+    const h = help(['g'], { b: 2 })
+    const without = planGames(queue, skillOf)
+    const withHelp = planGames(queue, skillOf, { help: h })
+    expect(withHelp.games[0].swap).toEqual(without.games[0].swap)
+    expect(withHelp.order.slice(4)).toEqual(without.order.slice(4))
+    expect(withHelp.games[0].swap).toMatchObject({ in: 'b', out: 'd' })
+    expect(withHelp.games[0].help).toEqual({ player: 'g', partner: 'b', streak: 2 })
+    expect(without.games[0].help).toBeUndefined()
+  })
+
+  it('is on by default and carries over when turned off', () => {
+    expect(isHelpStruggling(newSession())).toBe(true)
+    const off = { ...newSession(), helpStruggling: false }
+    expect(isHelpStruggling(newSession(off))).toBe(false)
+  })
+})
+
+describe('data saved by the app already in use', () => {
+  // A session as the deployed version saves it: no court booking, no help setting.
+  const saved = JSON.parse(
+    JSON.stringify({
+      id: 'old',
+      date: '2026-10-21',
+      courtCount: 3,
+      courtFee: 1860,
+      shuttlePrice: 0,
+      extraShuttles: 0,
+      shuttleTypes: [{ id: 'x', name: 'XP2', price: 90, extra: 0, start: 12, left: 4 }],
+      shuttleTypeId: 'x',
+      skillMatch: false,
+      attendees: ['a', 'b', 'c', 'd'].map((playerId, i) => ({ playerId, checkedInAt: i, gamesPlayed: 1, paid: true, resting: false })),
+      queue: [],
+      courts: [null, null, null],
+      games: [{ id: 'g', number: 1, court: 2, teamA: ['a', 'b'], teamB: ['c', 'd'], startedAt: 0, endedAt: 900_000, shuttles: 1, shuttleType: 'x', winner: 'A' }],
+      status: 'closed',
+    }),
+  ) as Session
+
+  it('still works everywhere: costs, counts, stats, settings and the next session', () => {
+    expect(costSummary(saved)).toMatchObject({ total: 1860 + 90, heads: 4 })
+    expect(courtBooking(saved)).toEqual({ courts: 1, hours: 1, rate: 1860 })
+    expect(shuttleCount(saved)).toMatchObject({ start: 12, left: 4, used: 8 })
+    expect(isHelpStruggling(saved)).toBe(true)
+    expect(isSkillMatch(saved)).toBe(false)
+    expect(standings(playedGames([saved])).map((r) => r.id)).toEqual(['a', 'b', 'c', 'd'])
+    expect(helpFrom(playedGames([saved])).streak.get('a')).toBe(1)
+    const next = newSession(saved)
+    expect(next).toMatchObject({ courtFee: 1860, skillMatch: false })
+    expect(next.courtBooking).toBeUndefined()
+    expect(next.shuttleTypes?.[0]).toMatchObject({ name: 'XP2', start: 4, left: undefined })
+  })
+})
+
+describe('out of hours', () => {
+  it('ends a game with no winner, marked out of hours, players back in the queue', () => {
+    const st = useStore.getState()
+    useStore.setState({ session: newSession() })
+    ;['a', 'b', 'c', 'd', 'e'].forEach((id) => st.checkIn(id))
+    st.startTimer(2)
+    st.startGame(1, ['a', 'b'], ['c', 'd'])
+    const id = useStore.getState().session.games[0].id
+    st.endGame(id, undefined, true)
+    const s = useStore.getState().session
+    expect(s.games[0]).toMatchObject({ outOfHours: true, winner: undefined })
+    expect(s.games[0].endedAt).toBeDefined()
+    expect(s.courts[0]).toBeNull()
+    expect(s.queue).toEqual(['e', 'a', 'b', 'c', 'd'])
+    expect(s.attendees.find((a) => a.playerId === 'a')?.gamesPlayed).toBe(1)
+    // Played, but not a win or a loss; streaks skip it.
+    expect(playerRecords(s.games).get('a')).toEqual({ played: 1, wins: 0, losses: 0 })
+    expect(streaks(s.games).size).toBe(0)
+  })
+
+  it('is dropped when a winner is set later, and kept when the winner is only cleared', () => {
+    const st = useStore.getState()
+    const id = useStore.getState().session.games[0].id
+    st.setWinner(id, 'A')
+    expect(useStore.getState().session.games[0]).toMatchObject({ winner: 'A', outOfHours: undefined })
+    useStore.setState((x) => ({ session: { ...x.session, games: [{ ...x.session.games[0], winner: undefined, outOfHours: true }] } }))
+    st.setWinner(id, undefined)
+    expect(useStore.getState().session.games[0].outOfHours).toBe(true)
+  })
+
+  it('never ends a game that has a winner as out of hours', () => {
+    const st = useStore.getState()
+    useStore.setState({ session: newSession() })
+    ;['a', 'b', 'c', 'd'].forEach((id) => st.checkIn(id))
+    st.startTimer(2)
+    st.startGame(1, ['a', 'b'], ['c', 'd'])
+    st.endGame(useStore.getState().session.games[0].id, 'B', true)
+    expect(useStore.getState().session.games[0].outOfHours).toBeUndefined()
+  })
+
+  it("doesn't count as the shortest game, since it was cut short", () => {
+    const g = (id: string, mins: number, outOfHours?: boolean) =>
+      ({ id, court: 1, teamA: ['a', 'b'], teamB: ['c', 'd'], startedAt: 0, endedAt: mins * 60_000, shuttles: 0, outOfHours }) as Session['games'][number]
+    expect(gameExtremes([g('cut', 3, true), g('full', 12), g('long', 25)])).toMatchObject({
+      shortest: { id: 'full' },
+      longest: { id: 'long' },
+    })
+  })
+
+  it('can mark a finished game with no result as out of hours later, in history too, and undo it', () => {
+    const st = useStore.getState()
+    useStore.setState({ session: newSession(), history: [] })
+    ;['a', 'b', 'c', 'd'].forEach((id) => st.checkIn(id))
+    st.startTimer(2)
+    st.startGame(1, ['a', 'b'], ['c', 'd'])
+    const id = useStore.getState().session.games[0].id
+    st.setOutOfHours(id, true) // still on court: ignored
+    expect(useStore.getState().session.games[0].outOfHours).toBeUndefined()
+    st.endGame(id)
+    st.closeSession()
+    st.setOutOfHours(id, true)
+    expect(useStore.getState().history[0].games[0].outOfHours).toBe(true)
+    st.setOutOfHours(id, false)
+    expect(useStore.getState().history[0].games[0].outOfHours).toBeUndefined()
+    // A game with a winner can't be out of hours.
+    st.setWinner(id, 'A')
+    st.setOutOfHours(id, true)
+    expect(useStore.getState().history[0].games[0].outOfHours).toBeUndefined()
   })
 })

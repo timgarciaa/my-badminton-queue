@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react'
 import { costSummary, money } from '../lib/cost'
+import { longDate } from '../lib/stats'
 import { EmptyState } from '../components/ui'
 import { usePlayerMap, useStore } from '../store/useStore'
 import type { Session } from '../types'
@@ -14,8 +15,6 @@ const readLastBackup = () => {
   }
 }
 
-const longDate = (iso: string) =>
-  new Date(iso + 'T00:00').toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })
 
 function ago(ms: number) {
   const days = Math.floor((Date.now() - ms) / 86_400_000)

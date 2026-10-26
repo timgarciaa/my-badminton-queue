@@ -57,6 +57,14 @@ export interface ShuttleType {
   left?: number
 }
 
+/** The court booking the court fee is worked out from. */
+export interface CourtBooking {
+  courts: number
+  hours: number
+  /** Per court, per hour. */
+  rate: number
+}
+
 export interface Game {
   id: string
   /** Game number within the session, in start order (missing on older games). */
@@ -73,6 +81,8 @@ export interface Game {
   swap?: GameSwap
   /** Winning team; missing if not recorded. */
   winner?: 'A' | 'B'
+  /** Ended without a winner because the court booking ran out. */
+  outOfHours?: boolean
   /** Started from a set game (four players who asked to play together). */
   set?: boolean
   /** Winners of the previous game on this court, who stayed on and split up. */
@@ -99,7 +109,10 @@ export interface Session {
   id: string
   date: string
   courtCount: number
+  /** Total court fee: courts × hours × rate when courtBooking is set. */
   courtFee: number
+  /** Missing on older sessions, where the court fee was entered as a total. */
+  courtBooking?: CourtBooking
   /** Price per shuttle on sessions from before shuttle types; see shuttleTypes. */
   shuttlePrice: number
   /** Manual adjustment on sessions from before shuttle types; see ShuttleType.extra. */
@@ -119,6 +132,11 @@ export interface Session {
    * games only look at fresh partners and new people, then mixed pairs.
    */
   skillMatch?: boolean
+  /**
+   * Partner a player with no wins in their last 5 games (last 3 months) with
+   * the player on the best win streak, within the next four (on unless false).
+   */
+  helpStruggling?: boolean
   /** Default shuttle type; new games start with it. */
   shuttleTypeId?: string
   attendees: Attendee[]

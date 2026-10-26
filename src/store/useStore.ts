@@ -1,10 +1,10 @@
 import { useMemo } from 'react'
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-import { gameShuttleType, sessionStarted, shuttlesInStock } from '../lib/cost'
+import { courtBooking, courtFeeOf, gameShuttleType, sessionStarted, shuttlesInStock } from '../lib/cost'
 import { heldIds, isSetReady, setIds } from '../lib/plan'
 import { applySwap, dequeue, enqueue, move, pushFront, swap } from '../lib/queue'
-import type { Game, GameSwap, Gender, Pair, Player, Session, SetGame, ShuttleType, Skill } from '../types'
+import type { CourtBooking, Game, GameSwap, Gender, Pair, Player, Session, SetGame, ShuttleType, Skill } from '../types'
 
 const uid = () => crypto.randomUUID()
 const today = () => new Date().toLocaleDateString('en-CA')
@@ -17,7 +17,17 @@ export function withShuttleTypes(s: Session): Session {
 }
 
 export function newSession(
-  prev?: Pick<Session, 'courtCount' | 'courtFee' | 'shuttlePrice' | 'shuttleTypes' | 'shuttleTypeId' | 'skillMatch'>,
+  prev?: Pick<
+    Session,
+    | 'courtCount'
+    | 'courtFee'
+    | 'courtBooking'
+    | 'shuttlePrice'
+    | 'shuttleTypes'
+    | 'shuttleTypeId'
+    | 'skillMatch'
+    | 'helpStruggling'
+  >,
 ): Session {
   const courtCount = prev?.courtCount ?? 2
   // Keep the shuttle types and prices; the counts start again, from what was
@@ -31,11 +41,14 @@ export function newSession(
     date: today(),
     courtCount,
     courtFee: prev?.courtFee ?? 0,
+    // The same booking as last time, until changed.
+    ...(prev?.courtBooking && { courtBooking: prev.courtBooking }),
     shuttlePrice: prev?.shuttlePrice ?? 0,
     extraShuttles: 0,
     shuttleTypes,
     shuttleTypeId,
     ...(prev?.skillMatch === false && { skillMatch: false }),
+    ...(prev?.helpStruggling === false && { helpStruggling: false }),
     attendees: [],
     queue: [],
     courts: Array(courtCount).fill(null),
@@ -54,6 +67,8 @@ const count = (n?: number) => (n === undefined || !Number.isFinite(n) ? undefine
 
 /** Whether games are matched on skill (on unless turned off). */
 export const isSkillMatch = (s: Session) => s.skillMatch !== false
+/** Whether struggling players are partnered with the player on a win streak (on unless turned off). */
+export const isHelpStruggling = (s: Session) => s.helpStruggling !== false
 
 /** Add or remove a court number in a list of courts. */
 const withCourt = (list: unknown, court: number, on: boolean) => {
@@ -105,15 +120,20 @@ function beginGame(
   }
 }
 
-/** End a game: record the winner, count the game, and send players (except `keep`) to the queue. */
-function finishGame(s: Session, gameId: string, winner?: 'A' | 'B', keep: string[] = []): Session {
+/**
+ * End a game: record the winner (or that the court time ran out), count the
+ * game, and send players (except `keep`) to the queue.
+ */
+function finishGame(s: Session, gameId: string, winner?: 'A' | 'B', keep: string[] = [], outOfHours = false): Session {
   const game = s.games.find((g) => g.id === gameId)
   if (!game || game.endedAt) return s
   const ids = [...game.teamA, ...game.teamB]
   const back = ids.filter((id) => !keep.includes(id) && s.attendees.some((a) => a.playerId === id && !a.resting))
   return {
     ...s,
-    games: s.games.map((g) => (g.id === gameId ? { ...g, endedAt: Date.now(), winner } : g)),
+    games: s.games.map((g) =>
+      g.id === gameId ? { ...g, endedAt: Date.now(), winner, ...(outOfHours && !winner && { outOfHours: true }) } : g,
+    ),
     courts: s.courts.map((c) => (c === gameId ? null : c)),
     attendees: s.attendees.map((a) => (ids.includes(a.playerId) ? { ...a, gamesPlayed: a.gamesPlayed + 1 } : a)),
     queue: enqueue(s.queue, back),
@@ -148,6 +168,8 @@ interface State {
 
   setSessionField: (field: 'courtFee' | 'shuttlePrice' | 'extraShuttles', value: number) => void
   setCourtCount: (n: number) => void
+  /** Change the court booking; the court fee is worked out from it. */
+  setCourtBooking: (patch: Partial<CourtBooking>) => void
   addShuttleType: (name: string, price: number) => void
   updateShuttleType: (id: string, patch: Partial<Pick<ShuttleType, 'name' | 'price' | 'extra'>>) => void
   /** Remove a shuttle type that no game used. */
@@ -173,7 +195,13 @@ interface State {
   /** Start a game; `swap` (if any) is applied to the queue first. `setId` marks a set game being played. */
   startGame: (court: number, teamA: Pair, teamB: Pair, swap?: GameSwap, setId?: string) => void
   addShuttle: (gameId: string, delta: number) => void
-  endGame: (gameId: string, winner?: 'A' | 'B') => void
+  /**
+   * Move a game in progress to another court (players went to the wrong one).
+   * A game already there trades courts with it. Only the court changes.
+   */
+  moveGame: (gameId: string, court: number) => void
+  /** End a game with a winner, no result, or out of hours (the court booking ran out). */
+  endGame: (gameId: string, winner?: 'A' | 'B', outOfHours?: boolean) => void
   /**
    * Winners stay: end the game, send the losers to the queue, and start the
    * next game on the same court with the winners split up (teamA/teamB).
@@ -185,7 +213,11 @@ interface State {
   setWinnersSplit: (court: number, split: boolean) => void
   /** Turn skill matching on or off for picking and splitting games. */
   setSkillMatch: (on: boolean) => void
-  /** Set or clear the winner of a finished game, in this session or history. */
+  /** Turn helping struggling players on or off. */
+  setHelpStruggling: (on: boolean) => void
+  /** Mark a finished game with no winner as out of hours (court time ran out), or undo it; this session or history. */
+  setOutOfHours: (gameId: string, on: boolean) => void
+  /** Set or clear the winner of a finished game, in this session or history. A winner replaces "out of hours". */
   setWinner: (gameId: string, winner?: 'A' | 'B') => void
   cancelGame: (gameId: string) => void
 
@@ -303,6 +335,12 @@ export const useStore = create<State>()(
             return { ...s, courtCount: count, courts }
           }),
 
+        setCourtBooking: (patch) =>
+          updateSession((s) => {
+            const booking = { ...courtBooking(s), ...patch }
+            return { ...s, courtBooking: booking, courtFee: courtFeeOf(booking) }
+          }),
+
         addShuttleType: (name, price) =>
           updateSession((s) => {
             const types = s.shuttleTypes ?? []
@@ -400,7 +438,21 @@ export const useStore = create<State>()(
             }),
           })),
 
-        endGame: (gameId, winner) => updateSession((s) => finishGame(s, gameId, winner)),
+        moveGame: (gameId, court) =>
+          updateSession((s) => {
+            const game = s.games.find((g) => g.id === gameId)
+            if (!game || game.endedAt || court === game.court || !(court >= 1 && court <= s.courts.length)) return s
+            const other = s.courts[court - 1]
+            return {
+              ...s,
+              games: s.games.map((g) =>
+                g.id === gameId ? { ...g, court } : g.id === other ? { ...g, court: game.court } : g,
+              ),
+              courts: s.courts.map((id, i) => (i === court - 1 ? gameId : i === game.court - 1 ? other : id)),
+            }
+          }),
+
+        endGame: (gameId, winner, outOfHours) => updateSession((s) => finishGame(s, gameId, winner, [], outOfHours)),
 
         rotateWinners: (gameId, winner, teamA, teamB) =>
           updateSession((s) => {
@@ -418,12 +470,27 @@ export const useStore = create<State>()(
           updateSession((s) => ({ ...s, winnersTogether: withCourt(s.winnersTogether, court, !split) })),
 
         setSkillMatch: (on) => updateSession((s) => ({ ...s, skillMatch: on })),
+        setHelpStruggling: (on) => updateSession((s) => ({ ...s, helpStruggling: on })),
+
+        setOutOfHours: (gameId, on) =>
+          set((st) => {
+            const fix = (s: Session): Session =>
+              s.games.some((g) => g.id === gameId && g.endedAt && !g.winner)
+                ? { ...s, games: s.games.map((g) => (g.id === gameId ? { ...g, outOfHours: on || undefined } : g)) }
+                : s
+            return { session: fix(st.session), history: st.history.map(fix) }
+          }),
 
         setWinner: (gameId, winner) =>
           set((st) => {
             const fix = (s: Session): Session =>
               s.games.some((g) => g.id === gameId)
-                ? { ...s, games: s.games.map((g) => (g.id === gameId ? { ...g, winner } : g)) }
+                ? {
+                    ...s,
+                    games: s.games.map((g) =>
+                      g.id === gameId ? { ...g, winner, outOfHours: winner ? undefined : g.outOfHours } : g,
+                    ),
+                  }
                 : s
             return { session: fix(st.session), history: st.history.map(fix) }
           }),

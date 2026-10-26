@@ -1,6 +1,6 @@
 import { useState, type PointerEvent as ReactPointerEvent } from 'react'
 import { setIds, type PlannedGame } from '../lib/plan'
-import { isSkillMatch, useStore } from '../store/useStore'
+import { isHelpStruggling, isSkillMatch, useStore } from '../store/useStore'
 import type { GameSwap, Pair, Player, SetGame } from '../types'
 import { EmptyState, PlayerTags } from './ui'
 
@@ -139,14 +139,15 @@ export function QueuePanel({
               <span className="d-badge d-badge-secondary d-badge-soft d-badge-sm font-semibold">Set game</span>
             )}
             {manual && <span className="d-badge d-badge-ghost d-badge-sm font-semibold whitespace-nowrap">Set by hand</span>}
-            <div className="ml-auto flex items-center gap-2">
-              {manual && (
-                <button className="d-btn d-btn-primary d-btn-soft d-btn-xs" onClick={clearManual}>
-                  Auto
-                </button>
-              )}
-              <SkillMatchToggle />
-            </div>
+            {manual && (
+              <button className="d-btn d-btn-primary d-btn-soft d-btn-xs ml-auto" onClick={clearManual}>
+                Auto
+              </button>
+            )}
+          </div>
+          <div className="flex items-center gap-4 px-1 pb-2">
+            <SkillMatchToggle />
+            <HelpToggle />
           </div>
           <TeamBlock pair={next.teamA} side="A" rowProps={rowProps} />
           <div className="py-1 text-center text-xs font-bold text-slate-400">VS</div>
@@ -161,6 +162,12 @@ export function QueuePanel({
                 </>
               )}
               {SWAP_REASON[next.swap.reason]}.
+            </p>
+          )}
+          {next.help && (
+            <p role="status" className="d-alert d-alert-success d-alert-soft mt-2 block px-2.5 py-1.5 text-xs">
+              <strong>{name(next.help.player)}</strong> teams up with <strong>{name(next.help.partner)}</strong>, on{' '}
+              {next.help.streak === 1 ? 'a win' : `${next.help.streak} wins in a row`}.
             </p>
           )}
           <p className="mt-2 px-1 text-xs text-slate-400">
@@ -385,6 +392,26 @@ function SkillMatchToggle() {
         className="d-toggle d-toggle-xs d-toggle-primary"
         checked={on}
         onChange={(e) => setSkillMatch(e.target.checked)}
+      />
+    </label>
+  )
+}
+
+/** On: a player with no wins in their last 5 games partners the player on the best win streak in their four. */
+function HelpToggle() {
+  const on = useStore((s) => isHelpStruggling(s.session))
+  const setHelpStruggling = useStore((s) => s.setHelpStruggling)
+  return (
+    <label
+      className="flex cursor-pointer items-center gap-1.5 text-xs font-medium whitespace-nowrap text-slate-500"
+      title="On: a player who hasn't won in their last 5 games (last 3 months) partners whoever in their four is on the best win streak. Never repeats a partner, never changes the queue order."
+    >
+      Help losing players
+      <input
+        type="checkbox"
+        className="d-toggle d-toggle-xs d-toggle-primary"
+        checked={on}
+        onChange={(e) => setHelpStruggling(e.target.checked)}
       />
     </label>
   )

@@ -1,4 +1,4 @@
-import type { Game, Session } from '../types'
+import type { CourtBooking, Game, Session } from '../types'
 
 export interface ShuttleLine {
   id: string
@@ -44,6 +44,21 @@ export function shuttleLines(session: Session): ShuttleLine[] {
 
 export function shuttlesUsed(session: Session): number {
   return shuttleLines(session).reduce((n, l) => n + l.used, 0)
+}
+
+/**
+ * The court booking behind the court fee. Older sessions only have a total,
+ * shown as one court for one hour at that price.
+ */
+export function courtBooking(session: Session): CourtBooking {
+  if (session.courtBooking) return session.courtBooking
+  if (session.courtFee) return { courts: 1, hours: 1, rate: session.courtFee }
+  return { courts: session.courtCount, hours: 2, rate: 0 }
+}
+
+/** Courts × hours × rate, to the cent. */
+export function courtFeeOf({ courts, hours, rate }: CourtBooking): number {
+  return Math.round(courts * hours * rate * 100) / 100
 }
 
 /** The shuttle type a game counts towards; games from before types, or of a removed type, count as the first. */

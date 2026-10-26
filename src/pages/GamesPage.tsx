@@ -1,6 +1,7 @@
 import { useState } from 'react'
-import { finishedGames, playerRecords, winRate } from '../lib/stats'
-import { EmptyState, PlayerTags } from '../components/ui'
+import { Standings } from '../components/Standings'
+import { finishedGames, longDate } from '../lib/stats'
+import { EmptyState } from '../components/ui'
 import { usePlayerMap, useStore } from '../store/useStore'
 import type { Game, GameSwap, Pair, Player } from '../types'
 
@@ -23,15 +24,14 @@ export function GamesPage() {
   const [focus, setFocus] = useState<string | null>(null)
 
   const games = finishedGames(scope === 'today' ? [session] : [session, ...history])
-  const noResult = games.filter((g) => !g.winner).length
+  // Games still missing a winner; out-of-hours games have their result.
+  const pending = (g: Game) => !g.winner && !g.outOfHours
+  const noResult = games.filter(pending).length
   const shown = games
-    .filter((g) => show === 'all' || !g.winner)
+    .filter((g) => show === 'all' || pending(g))
     .filter((g) => !focus || [...g.teamA, ...g.teamB].includes(focus))
-  const standings = [...playerRecords(games)]
-    .map(([id, r]) => ({ id, player: players.get(id), ...r, rate: winRate(r) }))
-    .filter((s) => s.player)
-    .sort((a, b) => b.wins - a.wins || (b.rate ?? -1) - (a.rate ?? -1) || a.played - b.played)
   const focused = focus ? players.get(focus) : undefined
+  const sessions = history.filter((h) => h.games.length).length + (session.games.length ? 1 : 0)
 
   return (
     <div className="grid h-full grid-cols-[1fr_24rem] gap-5 p-5">
@@ -94,69 +94,18 @@ export function GamesPage() {
         </div>
       </section>
 
-      <section className="d-card d-card-border bg-base-100 shadow-sm flex flex-col overflow-hidden">
-        <div className="flex items-baseline justify-between border-b border-slate-100 px-4 py-3">
-          <h2 className="text-lg font-bold">Standings</h2>
-          <span className="text-xs text-slate-500">Tap a player to see their games</span>
-        </div>
-        {standings.length === 0 ? (
-          <p className="p-5 text-slate-500">No records yet.</p>
-        ) : (
-          <div className="overflow-y-auto">
-            <table className="d-table d-table-pin-rows d-table-sm tabular-nums">
-              <thead>
-                <tr className="bg-white">
-                  <th className="w-8">#</th>
-                  <th>Player</th>
-                  <th className="text-center">W</th>
-                  <th className="text-center">L</th>
-                  <th className="text-right">Win %</th>
-                </tr>
-              </thead>
-              <tbody>
-                {standings.map((s, i) => (
-                  <tr
-                    key={s.id}
-                    className={`cursor-pointer ${focus === s.id ? 'bg-teal-50' : 'hover:bg-slate-50'}`}
-                    onClick={() => setFocus(focus === s.id ? null : s.id)}
-                  >
-                    <td>
-                      <span
-                        className={`d-badge d-badge-sm w-6 font-bold ${
-                          i === 0
-                            ? 'bg-amber-300 text-amber-950'
-                            : i === 1
-                              ? 'bg-slate-300 text-slate-800'
-                              : i === 2
-                                ? 'bg-orange-200 text-orange-900'
-                                : 'd-badge-ghost'
-                        }`}
-                      >
-                        {i + 1}
-                      </span>
-                    </td>
-                    <td>
-                      <span className="flex items-center gap-2">
-                        <span className="min-w-0 truncate text-base font-semibold">{s.player!.name}</span>
-                        <PlayerTags player={s.player!} />
-                      </span>
-                      <span className="text-xs text-slate-400">{s.played} played</span>
-                    </td>
-                    <td className="text-center text-base font-bold text-emerald-700">{s.wins}</td>
-                    <td className="text-center text-base font-bold text-rose-600">{s.losses}</td>
-                    <td className="text-right">
-                      <span className="font-semibold">{s.rate === null ? '–' : `${Math.round(s.rate * 100)}%`}</span>
-                      {s.rate !== null && (
-                        <progress className="d-progress d-progress-success block h-1 w-14" value={s.rate} max={1} />
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </section>
+      <Standings
+        games={games}
+        title={scope === 'today' ? 'Standings' : 'All-time standings'}
+        subtitle={
+          scope === 'today'
+            ? `${longDate(session.date)} · ${games.length} ${games.length === 1 ? 'game' : 'games'}`
+            : `${sessions} ${sessions === 1 ? 'session' : 'sessions'} · ${games.length} games`
+        }
+        filename={`standings-${scope === 'today' ? session.date : 'all-time'}.png`}
+        focus={focus}
+        onFocus={setFocus}
+      />
     </div>
   )
 }
@@ -173,6 +122,7 @@ function GameRow({
   focus: string | null
 }) {
   const setWinner = useStore((s) => s.setWinner)
+  const setOutOfHours = useStore((s) => s.setOutOfHours)
   const shuttleTypes = useStore((s) => s.session.shuttleTypes)
   const mins = Math.round(((game.endedAt ?? game.startedAt) - game.startedAt) / 60_000)
   const time = new Date(game.startedAt).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
@@ -208,7 +158,9 @@ function GameRow({
 
   return (
     <li
-      className={`d-card d-card-border bg-base-100 px-3 py-2.5 ${game.winner ? '' : 'border-l-4 border-l-amber-400'}`}
+      className={`d-card d-card-border bg-base-100 px-3 py-2.5 ${
+        game.winner ? '' : game.outOfHours ? 'border-l-4 border-l-slate-300' : 'border-l-4 border-l-amber-400'
+      }`}
     >
       <div className="flex items-center gap-3">
         <div className="w-28 shrink-0">
@@ -226,8 +178,22 @@ function GameRow({
         {team('B', game.teamB)}
       </div>
       {(game.swap || game.set || !game.winner) && (
-        <p className="mt-1.5 flex flex-wrap gap-x-3 pl-31 text-xs">
-          {!game.winner && <span className="font-semibold text-amber-700">No result yet</span>}
+        <p className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 pl-31 text-xs">
+          {!game.winner &&
+            (game.outOfHours ? (
+              <span className="font-semibold text-slate-500">Out of hours · no winner</span>
+            ) : (
+              <span className="font-semibold text-amber-700">No result yet</span>
+            ))}
+          {!game.winner && (
+            <button
+              className={`d-btn d-btn-sm ${game.outOfHours ? 'd-btn-ghost text-slate-500' : 'd-btn-warning d-btn-soft'}`}
+              onClick={() => setOutOfHours(game.id, !game.outOfHours)}
+              title={game.outOfHours ? 'Back to no result' : 'The court time ran out before this game finished'}
+            >
+              {game.outOfHours ? 'Undo' : 'Mark out of hours'}
+            </button>
+          )}
           {game.set && <span className="font-semibold text-violet-700">Set game</span>}
           {game.swap && (
             <span className="text-sky-700">

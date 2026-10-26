@@ -7,12 +7,14 @@ import { GamesPage } from './pages/GamesPage'
 import { PlayersPage } from './pages/PlayersPage'
 import { SessionPage } from './pages/SessionPage'
 import { SettingsPage } from './pages/SettingsPage'
+import { StatsPage } from './pages/StatsPage'
 import { useStore } from './store/useStore'
 
 // Simple stroke icons (24x24 viewBox path data)
 const TABS = [
   { id: 'session', label: 'Courts', icon: 'M3 5h18v14H3zM12 5v14M3 12h18' },
   { id: 'games', label: 'Games', icon: 'M8 21h8M12 17v4M7 4h10v5a5 5 0 01-10 0zM7 6H4v1a3 3 0 003 3M17 6h3v1a3 3 0 01-3 3' },
+  { id: 'stats', label: 'Stats', icon: 'M4 20V11M10 20V5M16 20v-6M2 20h20' },
   { id: 'checkin', label: 'Check-in', icon: 'M5 12l4 4L19 6' },
   { id: 'players', label: 'Players', icon: 'M9 11a4 4 0 100-8 4 4 0 000 8zM2 21v-1a6 6 0 0112 0v1M16 3.5a4 4 0 010 7M22 21v-1a6 6 0 00-4-5.6' },
   { id: 'costs', label: 'Costs', icon: 'M8 21V3h5a4.5 4.5 0 010 9H8M5 6h14M5 9h14' },
@@ -48,6 +50,7 @@ export default function App() {
       <main className="min-h-0 flex-1 overflow-y-auto">
         {tab === 'session' && <SessionPage onGoToCheckIn={() => setTab('checkin')} />}
         {tab === 'games' && <GamesPage />}
+        {tab === 'stats' && <StatsPage />}
         {tab === 'checkin' && <CheckInPage onGoToPlayers={() => setTab('players')} />}
         {tab === 'players' && <PlayersPage />}
         {tab === 'costs' && <CostsPage />}

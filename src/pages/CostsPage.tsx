@@ -1,4 +1,4 @@
-import { costSummary, money, sessionStarted, shuttleCount, shuttlesInStock, type ShuttleLine } from '../lib/cost'
+import { costSummary, courtBooking, money, sessionStarted, shuttleCount, shuttlesInStock, type ShuttleLine } from '../lib/cost'
 import { Fragment, useEffect, useState } from 'react'
 import { EmptyState, MoneyField, Stepper } from '../components/ui'
 import { usePlayerMap, useStore } from '../store/useStore'
@@ -8,7 +8,6 @@ type PayFilter = 'all' | 'unpaid' | 'paid'
 
 export function CostsPage() {
   const session = useStore((s) => s.session)
-  const setField = useStore((s) => s.setSessionField)
   const togglePaid = useStore((s) => s.togglePaid)
   const closeSession = useStore((s) => s.closeSession)
   const players = usePlayerMap()
@@ -29,9 +28,7 @@ export function CostsPage() {
     <div className="grid h-full grid-cols-[22rem_1fr] gap-5 p-5">
       <div className="space-y-4 overflow-y-auto">
         <PerHeadCard />
-        <div className="d-card d-card-border bg-base-100 shadow-sm p-4">
-          <MoneyField label="Total court fee" value={session.courtFee} onChange={(n) => setField('courtFee', n)} />
-        </div>
+        <CourtFeeCard />
         <ShuttlesCard lines={c.shuttles} />
         <ShuttleCountCard />
       </div>
@@ -188,6 +185,36 @@ function EndSessionDialog({
         </div>
       </div>
       <button className="d-modal-backdrop" aria-label="Close" onClick={onCancel} />
+    </div>
+  )
+}
+
+/** Court fee worked out as you go: courts × hours × rate per court per hour. */
+function CourtFeeCard() {
+  const session = useStore((s) => s.session)
+  const setBooking = useStore((s) => s.setCourtBooking)
+  const b = courtBooking(session)
+  const row = 'flex items-center justify-between gap-2'
+  const label = 'text-sm font-medium text-slate-500'
+
+  return (
+    <div className="d-card d-card-border bg-base-100 shadow-sm space-y-3 p-5">
+      <h2 className="text-lg font-bold">Court fee</h2>
+      <div className={row}>
+        <span className={label}>Courts</span>
+        <Stepper value={b.courts} min={1} max={12} onChange={(n) => setBooking({ courts: n })} />
+      </div>
+      <div className={row}>
+        <span className={label}>Hours</span>
+        <Stepper value={b.hours} min={0.5} max={12} step={0.5} onChange={(n) => setBooking({ hours: n })} />
+      </div>
+      <MoneyField label="Per court, per hour" value={b.rate} onChange={(n) => setBooking({ rate: n })} />
+      <div className="flex items-baseline gap-2 border-t border-slate-200 pt-3">
+        <span className="text-sm text-slate-500 tabular-nums">
+          {b.courts} {b.courts === 1 ? 'court' : 'courts'} × {b.hours} h × {money(b.rate)}
+        </span>
+        <span className="ml-auto text-xl font-bold tabular-nums">{money(session.courtFee)}</span>
+      </div>
     </div>
   )
 }

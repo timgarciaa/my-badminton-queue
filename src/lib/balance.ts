@@ -12,10 +12,22 @@ export interface ScoredSplit extends Split {
   repeats: number
   /** Teams in this split that have partnered before. */
   repeatedPairs: Pair[]
+  /** A struggling player partnered with the player on the best win streak. */
+  helped?: { player: string; partner: string; streak: number }
 }
 
 type SkillOf = (id: string) => number
 type GenderOf = (id: string) => string | undefined
+
+/**
+ * Players to help: someone who lost each of their recent games partners the
+ * player on the longest current win streak, when both are in the same four.
+ */
+export interface Help {
+  struggling: Set<string>
+  /** Current win streak of players on one. */
+  streak: Map<string, number>
+}
 
 export interface BalanceOptions {
   /** How often each pair ("id|id") has been teammates this session. */
@@ -30,6 +42,8 @@ export interface BalanceOptions {
   locked?: Set<string>
   /** How often each pair ("id|id") has shared a court (as partners or opponents). */
   met?: Map<string, number>
+  /** Pair struggling players with the hottest player; only for the final split, never for swaps. */
+  help?: Help
 }
 
 /** The three distinct ways to split four players into two pairs. */
@@ -110,13 +124,14 @@ export function pairKey([x, y]: Pair): string {
 /**
  * Split four players into two teams. In order of priority:
  * 1. fresh partners (rotate who plays with whom),
- * 2. even total skill,
- * 3. one male + one female per team.
+ * 2. with `help`: a struggling player partners the player on the best win streak,
+ * 3. even total skill,
+ * 4. one male + one female per team.
  */
 export function splitTeams(
   four: string[],
   skillOf: SkillOf,
-  { partners = new Map(), genderOf = () => undefined, slack = Infinity }: BalanceOptions = {},
+  { partners = new Map(), genderOf = () => undefined, slack = Infinity, help }: BalanceOptions = {},
 ): ScoredSplit {
   if (four.length !== 4) throw new Error('splitTeams needs exactly 4 players')
   // A team counts as same-gender only when both genders are known and equal.
@@ -124,14 +139,30 @@ export function splitTeams(
     const gx = genderOf(x)
     return gx !== undefined && gx === genderOf(y)
   }
+  // The best current win streak among the four, from someone not struggling themselves.
+  const struggling = (id: string) => !!help?.struggling.has(id)
+  const hot = Math.max(0, ...four.filter((id) => !struggling(id)).map((id) => help?.streak.get(id) ?? 0))
+  const helpIn = ([x, y]: Pair) =>
+    [
+      [x, y],
+      [y, x],
+    ].map(([player, partner]) =>
+      hot && struggling(player) && !struggling(partner) && help!.streak.get(partner) === hot
+        ? { player, partner, streak: hot }
+        : undefined,
+    )
+  const canHelp = hot > 0 && four.some(struggling)
   const scored: ScoredSplit[] = allSplits(four, skillOf).map((s) => {
     const repeatedPairs = [s.teamA, s.teamB].filter((t) => (partners.get(pairKey(t)) ?? 0) > 0)
     const repeats = (partners.get(pairKey(s.teamA)) ?? 0) + (partners.get(pairKey(s.teamB)) ?? 0)
-    return { ...s, repeats, repeatedPairs }
+    const helped = [...helpIn(s.teamA), ...helpIn(s.teamB)].find(Boolean)
+    return { ...s, repeats, repeatedPairs, ...(helped && { helped }) }
   })
   const minDiff = Math.min(...scored.map((s) => s.diff))
   const unmixed = (s: Split) => Number(sameGender(s.teamA)) + Number(sameGender(s.teamB))
-  const score = (s: ScoredSplit) => s.repeats * 1000 + s.diff * 100 + unmixed(s) * 10
+  // Help (900) outweighs any skill gap and gender mix (at most 820), never a repeat partner (1000).
+  const unhelped = (s: ScoredSplit) => (canHelp && !s.helped ? 900 : 0)
+  const score = (s: ScoredSplit) => s.repeats * 1000 + unhelped(s) + s.diff * 100 + unmixed(s) * 10
   return scored
     .filter((s) => s.diff <= minDiff + slack)
     .reduce((best, s) => (score(s) < score(best) ? s : best))

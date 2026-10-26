@@ -49,12 +49,14 @@ export function Stepper({
   onChange,
   min = 0,
   max = 999,
+  step = 1,
   label,
 }: {
   value: number
   onChange: (n: number) => void
   min?: number
   max?: number
+  step?: number
   label?: ReactNode
 }) {
   return (
@@ -63,8 +65,8 @@ export function Stepper({
       <button
         type="button"
         className="d-btn d-btn-square h-11 w-11 border-slate-200 bg-white text-xl"
-        disabled={value <= min}
-        onClick={() => onChange(value - 1)}
+        disabled={value - step < min}
+        onClick={() => onChange(value - step)}
         aria-label="Decrease"
       >
         −
@@ -73,8 +75,8 @@ export function Stepper({
       <button
         type="button"
         className="d-btn d-btn-square h-11 w-11 border-slate-200 bg-white text-xl"
-        disabled={value >= max}
-        onClick={() => onChange(value + 1)}
+        disabled={value + step > max}
+        onClick={() => onChange(value + step)}
         aria-label="Increase"
       >
         +

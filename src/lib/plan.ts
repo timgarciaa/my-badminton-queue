@@ -11,6 +11,8 @@ export interface PlannedGame {
   manual?: boolean
   /** Id of the set game this is. */
   set?: string
+  /** A struggling player partnered with the player on the best win streak. */
+  help?: { player: string; partner: string; streak: number }
 }
 
 export const setIds = (g: Pick<SetGame, 'teamA' | 'teamB'>) => [...g.teamA, ...g.teamB]
@@ -84,6 +86,7 @@ export function planGames(
     autoSwap = true,
     fixed,
     sets = [],
+    help,
     ...opts
   }: BalanceOptions & {
     autoSwap?: boolean
@@ -124,12 +127,14 @@ export function planGames(
   while (q.length >= 4 && games.length < max) {
     const idea = autoSwap ? suggestSwap(q, skillOf, { ...opts, partners: counts, met: meets }) : null
     if (idea) q = applySwap(q, idea)
-    const split = splitTeams(q.slice(0, 4), skillOf, { ...opts, partners: counts })
+    // Help only picks partners within the four; swaps (above) are decided without it.
+    const split = splitTeams(q.slice(0, 4), skillOf, { ...opts, partners: counts, help })
     games.push({
       teamA: split.teamA,
       teamB: split.teamB,
       diff: split.diff,
       swap: idea ? { in: idea.in, out: idea.out, reason: idea.reason, ...(idea.also && { also: idea.also }) } : undefined,
+      ...(split.helped && { help: split.helped }),
     })
     count(q.slice(0, 4), [split.teamA, split.teamB])
     q = q.slice(4)
