@@ -6,7 +6,7 @@ import type { Help } from './balance'
 import { parseNames } from './importNames'
 import { matchSkill, planGames, winnersStayGame } from './plan'
 import { arrivals, bestRecord, checkinPlaces, checkinStandings, duoRecords, mostOften, gameExtremes, gameTime, helpFrom, ordinal, places, playedGames, sessionsWithin, standings, playerRecords, rivalries, streaks, winRate, worstRecord } from './stats'
-import { dequeue, enqueue, move, nextFour, pushFront, swap } from './queue'
+import { dequeue, enqueue, move, nextFour, placeByArrival, pushFront, swap } from './queue'
 import { isHelpStruggling, isSkillMatch, newSession, useStore } from '../store/useStore'
 
 const skills: Record<string, number> = { a: 5, b: 4, c: 2, d: 1, e: 3, f: 3, g: 1, h: 1 }
@@ -1077,5 +1077,42 @@ describe('phone check-in', () => {
     st().closeSession()
     expect(st().session.remote).toBeUndefined()
     expect(st().history[0].remote).toBeUndefined()
+  })
+})
+
+describe('changing a check-in time', () => {
+  const player = (id: string) => ({ id, name: id, skill: 3 as const, active: true, createdAt: 0 })
+  const st = () => useStore.getState()
+
+  it('places a player who has not played by arrival time', () => {
+    const newcomers = new Map([['a', 10], ['b', 20], ['c', 30], ['d', 40]])
+    // x has played: only newcomers count, and x keeps its place.
+    expect(placeByArrival(['x', 'a', 'b', 'c', 'd'], 'a', new Map([...newcomers, ['a', 35]]))).toEqual(['x', 'b', 'c', 'a', 'd'])
+    expect(placeByArrival(['a', 'b', 'c', 'd'], 'd', new Map([...newcomers, ['d', 5]]))).toEqual(['d', 'a', 'b', 'c'])
+    expect(placeByArrival(['a', 'b', 'x'], 'a', new Map([...newcomers, ['a', 99]]))).toEqual(['b', 'x', 'a'])
+    // Not waiting (on court or resting): the queue stays as it is.
+    expect(placeByArrival(['b', 'c'], 'a', newcomers)).toEqual(['b', 'c'])
+  })
+
+  it('moves a phone check-in back when they arrive later', () => {
+    useStore.setState({ players: ['a', 'b', 'c', 'd'].map(player), session: newSession() })
+    st().checkIn('a', 100)
+    st().checkIn('b', 200)
+    st().checkIn('c', 300)
+    st().setCheckinTime('a', 250)
+    expect(st().session.attendees.find((a) => a.playerId === 'a')!.checkedInAt).toBe(250)
+    expect(st().session.queue).toEqual(['b', 'a', 'c'])
+  })
+
+  it("only changes the time for someone who has played", () => {
+    useStore.setState({ players: ['a', 'b', 'c', 'd', 'e'].map(player), session: newSession() })
+    for (const [i, id] of ['a', 'b', 'c', 'd', 'e'].entries()) st().checkIn(id, i * 100)
+    st().startTimer(2)
+    st().startGame(1, ['a', 'b'], ['c', 'd'])
+    st().endGame(st().session.games[0].id, 'A')
+    const queue = st().session.queue
+    st().setCheckinTime('a', 999)
+    expect(st().session.queue).toEqual(queue)
+    expect(st().session.attendees.find((a) => a.playerId === 'a')!.checkedInAt).toBe(999)
   })
 })

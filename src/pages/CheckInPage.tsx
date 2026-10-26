@@ -13,6 +13,13 @@ const CONFIRM_MS = 350
 /** How long a just-checked-in card stays highlighted. */
 const RECENT_MS = 4000
 
+const clock = (at: number) => new Date(at).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
+/** "HH:MM" for a time input. */
+const hhmm = (at: number) => {
+  const d = new Date(at)
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+}
+
 const ordinal = (n: number) => {
   const s = ['th', 'st', 'nd', 'rd']
   const v = n % 100
@@ -38,6 +45,7 @@ export function CheckInPage({ onGoToPlayers }: { onGoToPlayers: () => void }) {
   const [leaving, setLeaving] = useState<Set<string>>(new Set())
   const [recent, setRecent] = useState<Set<string>>(new Set())
   const [justIn, setJustIn] = useState<Player | null>(null)
+  const [editing, setEditing] = useState<Player | null>(null)
   const timers = useRef<number[]>([])
   useEffect(() => () => timers.current.forEach(clearTimeout), [])
   const later = (fn: () => void, ms: number) => timers.current.push(window.setTimeout(fn, ms))
@@ -251,10 +259,17 @@ export function CheckInPage({ onGoToPlayers }: { onGoToPlayers: () => void }) {
                         {a.gamesPlayed} {a.gamesPlayed === 1 ? 'game' : 'games'}
                       </span>
                       <span>·</span>
-                      <span title="Checked in" className="flex items-center gap-0.5">
+                      <button
+                        title="Change check-in time"
+                        className="-my-1 flex items-center gap-1 rounded-md px-1.5 py-1 active:bg-emerald-100"
+                        onClick={() => setEditing(p)}
+                      >
                         {byPhone.has(p.id) && <PhoneIcon className="h-3.5 w-3.5" />}
-                        {new Date(a.checkedInAt).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}
-                      </span>
+                        {clock(a.checkedInAt)}
+                        <svg viewBox="0 0 24 24" className="h-3.5 w-3.5 text-slate-400" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                          <path d="M4 20h4L19 9l-4-4L4 16zM13.5 6.5l4 4" />
+                        </svg>
+                      </button>
                     </div>
                   </div>
                   {canCheckOut && (
@@ -280,6 +295,16 @@ export function CheckInPage({ onGoToPlayers }: { onGoToPlayers: () => void }) {
         </p>
       </section>
 
+      {editing && attendees.has(editing.id) && (
+        <CheckinTimeDialog
+          player={editing}
+          at={attendees.get(editing.id)!.checkedInAt}
+          byPhone={byPhone.has(editing.id)}
+          waiting={attendees.get(editing.id)!.gamesPlayed === 0 && session.queue.includes(editing.id)}
+          onClose={() => setEditing(null)}
+        />
+      )}
+
       {justIn && (
         <div className="d-toast d-toast-center bottom-20 z-40">
           <div key={justIn.id} className="d-alert d-alert-success gap-4 shadow-lg motion-safe:animate-toast-in">
@@ -302,6 +327,94 @@ export function CheckInPage({ onGoToPlayers }: { onGoToPlayers: () => void }) {
           </div>
         </div>
       )}
+    </div>
+  )
+}
+
+/**
+ * Change when a player arrived, e.g. someone who checked in on their phone
+ * before getting to the court. Someone still waiting for their first game
+ * moves to their place in the queue for the new time.
+ */
+function CheckinTimeDialog({
+  player,
+  at,
+  byPhone,
+  waiting,
+  onClose,
+}: {
+  player: Player
+  at: number
+  byPhone: boolean
+  waiting: boolean
+  onClose: () => void
+}) {
+  const setCheckinTime = useStore((s) => s.setCheckinTime)
+  const [time, setTime] = useState(() => hhmm(at))
+  // Set by "Arrived now", to keep the exact time.
+  const [now, setNow] = useState<number | null>(null)
+
+  const save = () => {
+    let next = now
+    if (next === null) {
+      const [h, m] = time.split(':').map(Number)
+      const d = new Date(at)
+      d.setHours(h, m, 0, 0)
+      next = d.getTime()
+    }
+    setCheckinTime(player.id, next)
+    onClose()
+  }
+
+  return (
+    <div className="d-modal d-modal-open" role="dialog" aria-modal="true" aria-labelledby="checkin-time-title">
+      <div className="d-modal-box max-w-md space-y-4">
+        <div>
+          <h2 id="checkin-time-title" className="text-xl font-bold">
+            Check-in time for {player.name}
+          </h2>
+          <p className="mt-1 flex items-center gap-1 text-sm text-slate-500">
+            {byPhone && <PhoneIcon className="h-4 w-4" />}
+            {byPhone ? 'Checked in on their phone' : 'Checked in'} at {clock(at)}
+          </p>
+        </div>
+        <div className="flex items-center gap-3">
+          <input
+            type="time"
+            className="field w-44 tabular-nums"
+            aria-label="Arrived at"
+            value={time}
+            onChange={(e) => {
+              setTime(e.target.value)
+              setNow(null)
+            }}
+          />
+          <button
+            className="d-btn d-btn-primary d-btn-soft h-12"
+            onClick={() => {
+              const t = Date.now()
+              setNow(t)
+              setTime(hhmm(t))
+            }}
+          >
+            Arrived now
+          </button>
+        </div>
+        <p className="text-sm text-slate-600">
+          {waiting
+            ? 'They move to their place in the queue for this time.'
+            : 'Only the time changes; their place in the queue stays the same.'}
+        </p>
+        <div className="d-modal-action mt-0">
+          <button className="d-btn" onClick={onClose}>
+            Cancel
+          </button>
+          <button className="d-btn d-btn-primary" disabled={!time} onClick={save}>
+            Save
+          </button>
+        </div>
+      </div>
+      <button className="d-modal-backdrop" aria-label="Close" onClick={onClose} />
     </div>
   )
 }

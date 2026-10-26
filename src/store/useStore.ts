@@ -3,7 +3,7 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { courtBooking, courtFeeOf, gameShuttleType, sessionStarted, shuttlesInStock } from '../lib/cost'
 import { heldIds, isSetReady, setIds } from '../lib/plan'
-import { applySwap, dequeue, enqueue, move, pushFront, swap } from '../lib/queue'
+import { applySwap, dequeue, enqueue, move, placeByArrival, pushFront, swap } from '../lib/queue'
 import type { CourtBooking, Game, GameSwap, Gender, Pair, Player, Session, SetGame, ShuttleType, Skill } from '../types'
 
 /** A check-in made on a player's phone; ids starting with new- are names not on the list. */
@@ -179,6 +179,12 @@ interface State {
   /** Undo a check-in made by mistake; ignored once the player has played or is on court. */
   checkOut: (playerId: string) => void
   setResting: (playerId: string, resting: boolean) => void
+  /**
+   * Correct when a player arrived (e.g. checked in on their phone before
+   * getting there). If they haven't played yet, they move to their place in
+   * the queue for that time.
+   */
+  setCheckinTime: (playerId: string, at: number) => void
   /** Open phone check-in for this session under a new code, with a PIN. */
   openRemote: (pin: string) => void
   setRemotePin: (pin: string) => void
@@ -348,6 +354,16 @@ export const useStore = create<State>()(
 
         dismissRemote: (id) =>
           updateSession((s) => (s.remote ? { ...s, remote: { ...s.remote, handled: [...s.remote.handled, id] } } : s)),
+
+        setCheckinTime: (playerId, at) =>
+          updateSession((s) => {
+            const attendee = s.attendees.find((a) => a.playerId === playerId)
+            if (!attendee) return s
+            const attendees = s.attendees.map((a) => (a.playerId === playerId ? { ...a, checkedInAt: at } : a))
+            if (attendee.gamesPlayed > 0) return { ...s, attendees }
+            const newcomers = new Map(attendees.filter((a) => a.gamesPlayed === 0).map((a) => [a.playerId, a.checkedInAt]))
+            return { ...s, attendees, queue: placeByArrival(s.queue, playerId, newcomers) }
+          }),
 
         setResting: (playerId, resting) =>
           updateSession((s) => {

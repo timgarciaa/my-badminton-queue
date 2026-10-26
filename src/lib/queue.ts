@@ -36,3 +36,16 @@ export function applySwap(queue: string[], s: { in: string; out: string; also?: 
   const once = swap(queue, s.out, s.in)
   return s.also ? swap(once, s.also.out, s.also.in) : once
 }
+
+/**
+ * Move a player who hasn't played yet to their place by arrival time: in front
+ * of the first waiting player who also hasn't played and arrived later, or at
+ * the back. newcomers: arrival times of the players who haven't played yet.
+ */
+export function placeByArrival(queue: string[], id: string, newcomers: Map<string, number>): string[] {
+  const at = newcomers.get(id)
+  if (at === undefined || !queue.includes(id)) return queue
+  const rest = queue.filter((q) => q !== id)
+  const i = rest.findIndex((q) => (newcomers.get(q) ?? -Infinity) > at)
+  return i < 0 ? [...rest, id] : [...rest.slice(0, i), id, ...rest.slice(i)]
+}
