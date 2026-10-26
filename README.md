@@ -16,9 +16,10 @@ iPad web app (PWA) for running badminton sessions: master player list, check-in,
 - **Game numbers** — each game gets a number in start order, shown on the court and in the Games tab.
 - **Rest** — take a player out of the queue without removing them from the session (they still pay).
 - **Costs** — (court fee + shuttles used × shuttle price) ÷ players present, rounded up to the next whole peso (no centavos). Shuttles are reused, so a game starts at 0 — tap + on the court when a new shuttle is opened. Adjust the total on Costs if needed. Tap a player to mark them paid.
-- **Settings** — export/import a JSON backup, discard the current session, view past sessions.
+- **Club account** — in Settings, an organizer signs in (username and password) and the iPad saves its players, current session and past sessions to their club in the cloud. The iPad keeps working from its own copy, so a session never waits on the internet: changes go up a few seconds later, or once it's back online. The header shows the club and whether everything is saved. Signing in on a new device brings the club's data down; if both the club and the iPad already have different data, you pick which to keep. If another device saved in the meantime, nothing is overwritten: a banner asks whether to use the club's data or keep this iPad's.
+- **Settings** — club account, export/import a JSON backup, discard the current session, view past sessions.
 
-Data is stored in the browser on the device (localStorage). Export a backup regularly.
+Data is stored in the browser on the device (localStorage), and also in the club's cloud data when an organizer is signed in. Export a backup regularly.
 
 ## Development
 
@@ -34,17 +35,31 @@ pnpm build      # production build in dist/
 Every push to `main` runs the tests, builds and publishes to GitHub Pages via `.github/workflows/deploy.yml`:
 https://timgarciaa.github.io/my-badminton-queue/
 
-### Phone check-in API (AWS)
+### API on AWS (phone check-in, club accounts)
 
-Phone check-in goes through a small API in `server/`: one Lambda function with a public URL and one DynamoDB table (each open check-in is one item, removed a day later). At a session a week it stays well within the AWS free tier. Only players' names and check-in times are sent; everything else stays on the iPad.
+Phone check-in and club accounts go through a small API in `server/`, deployed as one CloudFormation stack (`mbq-checkin`):
+
+- one Lambda function with a public URL (`lambda.mjs`; check-in in `checkin.mjs`, club data in `club.mjs`, sign-in checks in `auth.mjs`)
+- a DynamoDB table for open check-ins (each removed a day later)
+- a DynamoDB table for club data (one item per document: players, current session, each past session), with 35-day point-in-time recovery
+- a Cognito user pool for organizer accounts: username and password only, no sign-up page and no email; accounts are made with `server/club.sh`
+
+At a session a week it stays within the AWS free tier, apart from a few cents a month of DynamoDB writes.
 
 1. Sign the AWS CLI in to the account, under its own profile: `aws login --profile personal --region ap-southeast-1`. Check it with `aws sts get-caller-identity --profile personal`.
-2. `AWS_PROFILE=personal pnpm checkin:deploy` (region `ap-southeast-1` unless `AWS_REGION` is set). It creates or updates the `mbq-checkin` CloudFormation stack from `server/template.yaml`, uploads the function code and prints the API URL. Safe to run again.
-3. Put the URL in `.env.production` as `VITE_CHECKIN_API=https://...lambda-url...on.aws`, commit and push.
+2. `AWS_PROFILE=personal pnpm checkin:deploy` (region `ap-southeast-1` unless `AWS_REGION` is set). It creates or updates the stack from `server/template.yaml`, uploads the function code and prints the settings for the app. Safe to run again.
+3. Put those settings (`VITE_CHECKIN_API`, `VITE_AUTH_URL`, `VITE_COGNITO_CLIENT_ID`) in `.env.production`, commit and push.
 
-To remove it all: `aws cloudformation delete-stack --stack-name mbq-checkin --profile personal --region ap-southeast-1`.
+Clubs and organizers (`AWS_PROFILE=personal pnpm club <command>`):
 
-Without that setting the Phone check-in button is hidden. For local testing, `pnpm checkin:dev` runs the same API in memory on port 5181 (used by `pnpm dev` through `.env.development`). If the app moves off timgarciaa.github.io, update `AllowOrigin` in `server/template.yaml` and deploy again.
+- `create-club "Serve N' Shout"` prints the new club's id
+- `add-organizer <club-id> <username>` asks for the password (typed twice, not shown)
+- `set-password <username>` for a forgotten password (there's no email reset)
+- `remove-organizer <username>`, `clubs`, `organizers`
+
+To remove the stack: `aws cloudformation delete-stack --stack-name mbq-checkin --profile personal --region ap-southeast-1`. The club table and the user pool are kept (so club data and accounts survive); delete them in the AWS console if you really want them gone.
+
+Without these settings the Phone check-in button and Club account card are hidden. For local testing, `pnpm checkin:dev` runs the same API in memory on port 5181, with a stand-in for Cognito and a dev account `demo` / `demo1234` (used by `pnpm dev` through `.env.development`). If the app moves off timgarciaa.github.io, update `AllowOrigin` in `server/template.yaml` and deploy again.
 
 ### On an iPad
 

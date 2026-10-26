@@ -10,7 +10,8 @@
     "preview": "vite preview",
     "test": "vitest run",
     "checkin:dev": "node server/dev.mjs",
-    "checkin:deploy": "server/deploy.sh"
+    "checkin:deploy": "server/deploy.sh",
+    "club": "server/club.sh"
   },
   "dependencies": {
     "qrcode": "^1.5.4",

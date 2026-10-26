@@ -1,7 +1,9 @@
 import { useRef, useState } from 'react'
 import { costSummary, money } from '../lib/cost'
 import { longDate } from '../lib/stats'
+import { ClubAccountCard } from '../components/Cloud'
 import { EmptyState } from '../components/ui'
+import { useCloud } from '../lib/cloud'
 import { usePlayerMap, useStore } from '../store/useStore'
 import type { Session } from '../types'
 
@@ -31,6 +33,7 @@ export function SettingsPage() {
   const importData = useStore((s) => s.importData)
   const fileRef = useRef<HTMLInputElement>(null)
   const [lastBackup, setLastBackup] = useState(readLastBackup)
+  const club = useCloud((s) => s.club)
 
   const exportData = () => {
     const { players, session, history } = useStore.getState()
@@ -67,17 +70,21 @@ export function SettingsPage() {
     const justBackedUp = !!lastBackup && Date.now() - lastBackup < 60 * 60_000
     const what = `${players.length} players, ${history.length} past ${history.length === 1 ? 'session' : 'sessions'} and today's session`
     const warn = justBackedUp ? '' : "\n\nYou haven't exported a backup in the last hour. Export one first if you want to keep this data."
-    if (confirm(`Delete all data on this iPad: ${what}?${warn}\n\nThis cannot be undone.`)) clearAll()
+    const cloud = club ? `\n\nThis also deletes it from ${club.name} in the cloud.` : ''
+    if (confirm(`Delete all data on this iPad: ${what}?${warn}${cloud}\n\nThis cannot be undone.`)) clearAll()
   }
 
   return (
     <div className="grid h-full grid-cols-[22rem_1fr] gap-5 p-5">
       <div className="space-y-4 overflow-y-auto">
+        <ClubAccountCard />
         <div className="d-card d-card-border bg-base-100 shadow-sm">
           <div className="d-card-body gap-3 p-4">
             <h2 className="d-card-title text-lg">Backup</h2>
             <p className="text-sm text-slate-600">
-              Data is stored on this iPad only. Export a backup to keep it safe or move it to another device.
+              {club
+                ? `Data is on this iPad and saved to ${club.name}. A backup file is still handy to keep a copy of your own.`
+                : 'Data is stored on this iPad only. Export a backup to keep it safe or move it to another device.'}
             </p>
             <ul className="grid grid-cols-3 gap-2 text-center">
               {(

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Deploys the phone check-in API to AWS and prints its URL.
+# Deploys the MBQ API (phone check-in, club data, organizer sign-in) to AWS
+# and prints the settings the app needs.
 # Needs the AWS CLI signed in to your account. Region: AWS_REGION, default ap-southeast-1.
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -21,11 +22,13 @@ FUNCTION=$(aws cloudformation describe-stack-resource --stack-name "$STACK" --lo
   --query StackResourceDetail.PhysicalResourceId --output text)
 
 ZIP=$(mktemp -d)/checkin.zip
-zip -qj "$ZIP" lambda.mjs checkin.mjs
+zip -qj "$ZIP" lambda.mjs checkin.mjs club.mjs auth.mjs
 aws lambda update-function-code --function-name "$FUNCTION" --zip-file "fileb://$ZIP" --query LastUpdateStatus --output text
 aws lambda wait function-updated --function-name "$FUNCTION"
 
 URL=$(output Url)
 echo
-echo "Check-in API: ${URL%/}"
-echo "Put it in .env.production as VITE_CHECKIN_API=${URL%/}"
+echo "Settings for .env.production:"
+echo "VITE_CHECKIN_API=${URL%/}"
+echo "VITE_AUTH_URL=https://cognito-idp.$AWS_REGION.amazonaws.com/"
+echo "VITE_COGNITO_CLIENT_ID=$(output ClientId)"

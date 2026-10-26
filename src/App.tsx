@@ -1,4 +1,6 @@
 import { useState } from 'react'
+import { CloudBanner, CloudStatus } from './components/Cloud'
+import { useCloudSync } from './lib/cloud'
 import { costSummary, money } from './lib/cost'
 import { useRemoteCheckin, useRemoteStatus } from './lib/remoteCheckin'
 import { SessionTimer } from './components/SessionTimer'
@@ -30,13 +32,17 @@ export default function App() {
   const c = costSummary(session)
   const newcomers = useRemoteStatus((s) => s.newcomers.length)
   useRemoteCheckin()
+  useCloudSync()
 
   return (
     <div className="flex h-full flex-col pt-[env(safe-area-inset-top)]">
       <header className="flex items-center gap-6 border-b border-slate-200 bg-white px-6 py-3">
         <h1 className="leading-tight whitespace-nowrap text-teal-700">
           <span className="block text-2xl font-black tracking-tight">My Badminton Queue</span>
-          <span className="block text-sm font-semibold text-teal-600/80">by Serve N&apos; Shout</span>
+          <span className="flex items-center gap-2 text-sm font-semibold text-teal-600/80">
+            by Serve N&apos; Shout
+            <CloudStatus onOpen={() => setTab('settings')} />
+          </span>
         </h1>
         <div className="ml-auto">
           <SessionTimer />
@@ -49,6 +55,8 @@ export default function App() {
           <Stat label="Per head" value={money(c.perHead)} />
         </div>
       </header>
+
+      <CloudBanner onSignIn={() => setTab('settings')} />
 
       <main className="min-h-0 flex-1 overflow-y-auto">
         {tab === 'session' && <SessionPage onGoToCheckIn={() => setTab('checkin')} />}

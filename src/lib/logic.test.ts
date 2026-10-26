@@ -1116,3 +1116,39 @@ describe('changing a check-in time', () => {
     expect(st().session.attendees.find((a) => a.playerId === 'a')!.checkedInAt).toBe(999)
   })
 })
+
+describe('club cloud documents', async () => {
+  const { changes, fromDocs, hashOf, toDocs } = await import('./cloud')
+  const s1 = { ...newSession(), id: 's1', date: '2026-10-19' }
+  const s2 = { ...newSession(), id: 's2', date: '2026-10-26' }
+  const data = {
+    players: [{ id: 'a', name: 'Ana', skill: 3 as const, active: true, createdAt: 0 }],
+    session: newSession(),
+    history: [s2, s1],
+  }
+
+  it('splits the data into documents and back, newest past session first', () => {
+    const docs = toDocs(data)
+    expect(Object.keys(docs).sort()).toEqual(['h#s1', 'h#s2', 'players', 'session'])
+    const back = fromDocs({ ...docs })
+    expect(back.players).toEqual(data.players)
+    expect(back.session).toEqual(data.session)
+    expect(back.history.map((s) => s.id)).toEqual(['s2', 's1'])
+  })
+
+  it('sends only what changed, and removes what is gone', () => {
+    const docs = toDocs(data)
+    const saved = Object.fromEntries(Object.entries(docs).map(([id, json]) => [id, hashOf(json)]))
+    expect(changes(docs, saved)).toEqual([])
+    const next = toDocs({ ...data, players: [], history: [s2] })
+    expect(changes(next, saved)).toEqual([{ put: { players: '[]' }, remove: ['h#s1'] }])
+  })
+
+  it('splits a big first save into parts', () => {
+    const many = Array.from({ length: 200 }, (_, i) => ({ ...s1, id: `s${i}` }))
+    const batches = changes(toDocs({ ...data, history: many }), {})
+    expect(batches.length).toBe(3)
+    expect(batches.every((b) => Object.keys(b.put).length <= 80)).toBe(true)
+    expect(batches.reduce((n, b) => n + Object.keys(b.put).length, 0)).toBe(202)
+  })
+})

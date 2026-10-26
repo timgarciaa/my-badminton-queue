@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: MBQ phone check-in (Lambda function URL + DynamoDB). Deploy with server/deploy.sh.
+Description: MBQ API - phone check-in and club data with organizer sign-in (Lambda function URL, DynamoDB, Cognito). Deploy with server/deploy.sh.
 
 Parameters:
   AllowOrigin:
@@ -21,6 +21,65 @@ Resources:
         AttributeName: expires
         Enabled: true
 
+  # Club data: { pk: club#<id>, sk: meta, name, rev } and one { pk, sk: doc#<id>, data } per document.
+  ClubTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - { AttributeName: pk, AttributeType: S }
+        - { AttributeName: sk, AttributeType: S }
+      KeySchema:
+        - { AttributeName: pk, KeyType: HASH }
+        - { AttributeName: sk, KeyType: RANGE }
+      # Restore to any point in the last 35 days (a fraction of a cent a month at this size).
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+
+  # Organizer accounts: username and password only, created with server/club.sh
+  # (no sign-up page, no email). custom:club says which club they organize.
+  UserPool:
+    Type: AWS::Cognito::UserPool
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      UserPoolName: mbq-organizers
+      UsernameConfiguration:
+        CaseSensitive: false
+      AdminCreateUserConfig:
+        AllowAdminCreateUserOnly: true
+      AccountRecoverySetting:
+        RecoveryMechanisms:
+          - { Name: admin_only, Priority: 1 }
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 8
+          RequireLowercase: false
+          RequireUppercase: false
+          RequireNumbers: false
+          RequireSymbols: false
+      Schema:
+        - { Name: club, AttributeDataType: String, Mutable: true }
+
+  UserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      UserPoolId: !Ref UserPool
+      ClientName: mbq-app
+      GenerateSecret: false
+      ExplicitAuthFlows: [ALLOW_USER_PASSWORD_AUTH, ALLOW_REFRESH_TOKEN_AUTH]
+      PreventUserExistenceErrors: ENABLED
+      # Stay signed in on the club iPad for a year; tokens for requests last an hour.
+      RefreshTokenValidity: 365
+      IdTokenValidity: 1
+      AccessTokenValidity: 1
+      TokenValidityUnits: { RefreshToken: days, IdToken: hours, AccessToken: hours }
+      ReadAttributes: [custom:club]
+      # Organizers can't change their own club.
+      WriteAttributes: [name]
+
   Role:
     Type: AWS::IAM::Role
     Properties:
@@ -40,6 +99,9 @@ Resources:
               - Effect: Allow
                 Action: [dynamodb:GetItem, dynamodb:PutItem, dynamodb:UpdateItem, dynamodb:DeleteItem]
                 Resource: !GetAtt Table.Arn
+              - Effect: Allow
+                Action: [dynamodb:Query, dynamodb:PutItem, dynamodb:UpdateItem, dynamodb:DeleteItem, dynamodb:ConditionCheckItem]
+                Resource: !GetAtt ClubTable.Arn
 
   Function:
     Type: AWS::Lambda::Function
@@ -53,7 +115,10 @@ Resources:
       Environment:
         Variables:
           TABLE: !Ref Table
-      # Placeholder: deploy.sh uploads the real code (lambda.mjs, checkin.mjs).
+          CLUB_TABLE: !Ref ClubTable
+          USER_POOL_ID: !Ref UserPool
+          CLIENT_ID: !Ref UserPoolClient
+      # Placeholder: deploy.sh uploads the real code (server/*.mjs).
       Code:
         ZipFile: 'exports.handler = async () => ({ statusCode: 503 })'
 
@@ -71,7 +136,7 @@ Resources:
       Cors:
         AllowOrigins: [!Ref AllowOrigin]
         AllowMethods: [GET, POST, PUT, DELETE]
-        AllowHeaders: [content-type, x-key, x-pin]
+        AllowHeaders: [content-type, x-key, x-pin, authorization]
         MaxAge: 3600
 
   # A public function URL needs both permissions.
@@ -94,3 +159,9 @@ Resources:
 Outputs:
   Url:
     Value: !GetAtt Url.FunctionUrl
+  UserPoolId:
+    Value: !Ref UserPool
+  ClientId:
+    Value: !Ref UserPoolClient
+  ClubTable:
+    Value: !Ref ClubTable
