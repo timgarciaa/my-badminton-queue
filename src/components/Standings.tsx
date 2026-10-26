@@ -11,6 +11,27 @@ const MEDAL: Record<number, { badge: string; bracket: string }> = {
   3: { badge: 'bg-orange-200 text-orange-900', bracket: 'border-orange-300' },
 }
 
+/**
+ * The place cell of row i (1st, 2nd...), once per tie: it spans the tied rows
+ * with a bracket joining them. Renders nothing on the other tied rows.
+ */
+export function PlaceCell({ places, i }: { places: number[]; i: number }) {
+  const place = places[i]
+  if (place === places[i - 1]) return null
+  const tied = places.filter((p) => p === place).length
+  return (
+    <td rowSpan={tied} className="relative px-2">
+      <span className={`d-badge d-badge-sm w-10 font-bold ${MEDAL[place]?.badge ?? 'd-badge-ghost'}`}>{ordinal(place)}</span>
+      {tied > 1 && (
+        <span
+          aria-label={`${tied} tied`}
+          className={`absolute top-3 right-1 bottom-3 w-2 rounded-l-md border-y-2 border-l-2 ${MEDAL[place]?.bracket ?? 'border-slate-300'}`}
+        />
+      )}
+    </td>
+  )
+}
+
 export function ShareIcon({ className = 'h-5 w-5' }: { className?: string }) {
   return (
     <svg viewBox="0 0 24 24" className={className} fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
@@ -46,8 +67,6 @@ export function Standings({
     .map((s) => ({ ...s, player: players.get(s.id) }))
     .filter((s) => s.player)
   const place = places(ranked)
-  /** How many players share the place of row i. */
-  const tied = (i: number) => place.filter((p) => p === place[i]).length
 
   const share = () => {
     const rows = ranked.map((s, i) => ({ ...s, name: s.player!.name, place: place[i] }))
@@ -88,22 +107,7 @@ export function Standings({
                   className={onFocus ? `cursor-pointer ${focus === s.id ? 'bg-teal-50' : 'hover:bg-slate-50'}` : ''}
                   onClick={onFocus && (() => onFocus(focus === s.id ? null : s.id))}
                 >
-                  {/* One place per tie, bracketing the tied rows. */}
-                  {place[i] !== place[i - 1] && (
-                    <td rowSpan={tied(i)} className="relative px-2">
-                      <span className={`d-badge d-badge-sm w-10 font-bold ${MEDAL[place[i]]?.badge ?? 'd-badge-ghost'}`}>
-                        {ordinal(place[i])}
-                      </span>
-                      {tied(i) > 1 && (
-                        <span
-                          aria-label={`${tied(i)} tied`}
-                          className={`absolute top-3 right-1 bottom-3 w-2 rounded-l-md border-y-2 border-l-2 ${
-                            MEDAL[place[i]]?.bracket ?? 'border-slate-300'
-                          }`}
-                        />
-                      )}
-                    </td>
-                  )}
+                  <PlaceCell places={place} i={i} />
                   <td>
                     <span className="flex items-center gap-2">
                       <span className="min-w-0 truncate text-base font-semibold" title={s.player!.name}>

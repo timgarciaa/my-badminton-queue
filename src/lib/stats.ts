@@ -62,10 +62,15 @@ export function standings(games: Game[]): Standing[] {
  * share a place, and the next record takes the next place (1, 1, 2, 3, 3...).
  */
 export function places(rows: PlayerRecord[]): number[] {
+  return placesBy(rows, (r) => `${r.wins}-${r.losses}`)
+}
+
+/** Places for ranked rows, where rows with the same `key` as the one above tie (1, 1, 2...). */
+export function placesBy<T>(rows: T[], key: (r: T) => string): number[] {
   const out: number[] = []
   rows.forEach((r, i) => {
     const prev = rows[i - 1]
-    out.push(prev && prev.wins === r.wins && prev.losses === r.losses ? out[i - 1] : (out[i - 1] ?? 0) + 1)
+    out.push(prev !== undefined && key(prev) === key(r) ? out[i - 1] : (out[i - 1] ?? 0) + 1)
   })
   return out
 }
@@ -272,3 +277,41 @@ export function mostOften(ids: string[]): { ids: string[]; times: number } {
   const times = Math.max(0, ...counts.values())
   return { ids: [...counts].filter(([, n]) => n === times).map(([id]) => id), times }
 }
+
+/** A player's arrivals: how many sessions, how often first, and how long after the first arrival. */
+export interface CheckinRow {
+  id: string
+  sessions: number
+  firsts: number
+  /** Average minutes after the first player checked in. */
+  after: number
+  /** Check-in time, when covering one session. */
+  at?: number
+}
+
+/**
+ * Players ranked by how early they check in: on average the fewest minutes
+ * after the first arrival, then most often first. Sessions with fewer than
+ * two players are skipped.
+ */
+export function checkinStandings(sessions: Session[]): CheckinRow[] {
+  const rows = new Map<string, CheckinRow & { total: number }>()
+  const counted = sessions.filter((s) => s.attendees.length >= 2)
+  for (const s of counted) {
+    const firstAt = Math.min(...s.attendees.map((a) => a.checkedInAt))
+    for (const a of s.attendees) {
+      let r = rows.get(a.playerId)
+      if (!r) rows.set(a.playerId, (r = { id: a.playerId, sessions: 0, firsts: 0, after: 0, total: 0 }))
+      r.sessions++
+      if (a.checkedInAt === firstAt) r.firsts++
+      r.total += (a.checkedInAt - firstAt) / 60_000
+      if (counted.length === 1) r.at = a.checkedInAt
+    }
+  }
+  return [...rows.values()]
+    .map(({ total, ...r }) => ({ ...r, after: total / r.sessions }))
+    .sort((a, b) => a.after - b.after || b.firsts - a.firsts || b.sessions - a.sessions)
+}
+
+/** Check-in places: players arriving within the same minute (on average) share a place. */
+export const checkinPlaces = (rows: CheckinRow[]) => placesBy(rows, (r) => String(Math.round(r.after)))

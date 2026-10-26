@@ -214,6 +214,87 @@ function flyingShuttle(ctx: Ctx, cx: number, cy: number, size: number, band: str
   shuttle(ctx, cx, cy, size, angle, band)
 }
 
+/** Striped rows, so place badges and brackets (which span tied rows) can draw over them. */
+function stripes(ctx: Ctx, count: number, top: number) {
+  for (let i = 0; i < count; i += 2) {
+    ctx.fillStyle = '#f8fafc'
+    ctx.fillRect(PAD / 2, top + i * ROW, W - PAD, ROW)
+  }
+}
+
+/** One badge per place (1st, 2nd...), centred on its rows, with a bracket joining tied rows. */
+function placeBadges(ctx: Ctx, places: number[], x: number, top: number) {
+  const text = writer(ctx)
+  ctx.textBaseline = 'middle'
+  places.forEach((place, i) => {
+    if (place === places[i - 1]) return
+    const tied = places.filter((p) => p === place).length
+    const [fill, line] = MEDALS[place] ?? ['#f1f5f9', '#cbd5e1']
+    const mid = top + i * ROW + (tied * ROW) / 2
+    ctx.fillStyle = fill
+    ctx.beginPath()
+    ctx.roundRect(x - 30, mid - 20, 60, 40, 20)
+    ctx.fill()
+    text(ordinal(place), x, mid + 1, 22, '#1e293b', 800, 'center')
+    if (tied > 1) {
+      const bx = x + 42
+      const [y0, y1] = [top + i * ROW + 12, top + (i + tied) * ROW - 12]
+      ctx.strokeStyle = line
+      ctx.lineWidth = 4
+      ctx.lineJoin = 'round'
+      ctx.beginPath()
+      ctx.moveTo(bx + 10, y0)
+      ctx.lineTo(bx, y0)
+      ctx.lineTo(bx, y1)
+      ctx.lineTo(bx + 10, y1)
+      ctx.stroke()
+    }
+  })
+}
+
+/** An analogue clock face showing `time`. */
+function clockFace(ctx: Ctx, cx: number, cy: number, r: number, time: Date, accent: string) {
+  ctx.save()
+  ctx.translate(cx, cy)
+  ctx.fillStyle = 'rgba(255,255,255,0.95)'
+  ctx.beginPath()
+  ctx.arc(0, 0, r, 0, Math.PI * 2)
+  ctx.fill()
+  ctx.strokeStyle = 'rgba(255,255,255,0.45)'
+  ctx.lineWidth = r * 0.08
+  ctx.beginPath()
+  ctx.arc(0, 0, r * 1.08, 0, Math.PI * 2)
+  ctx.stroke()
+  ctx.strokeStyle = '#1e293b'
+  ctx.lineCap = 'round'
+  for (let i = 0; i < 12; i++) {
+    const a = (i / 12) * Math.PI * 2
+    const inner = i % 3 ? 0.82 : 0.72
+    ctx.lineWidth = i % 3 ? r * 0.03 : r * 0.06
+    ctx.beginPath()
+    ctx.moveTo(Math.sin(a) * r * inner, -Math.cos(a) * r * inner)
+    ctx.lineTo(Math.sin(a) * r * 0.9, -Math.cos(a) * r * 0.9)
+    ctx.stroke()
+  }
+  const hand = (turns: number, len: number, width: number, color: string) => {
+    const a = turns * Math.PI * 2
+    ctx.strokeStyle = color
+    ctx.lineWidth = width
+    ctx.beginPath()
+    ctx.moveTo(0, 0)
+    ctx.lineTo(Math.sin(a) * len, -Math.cos(a) * len)
+    ctx.stroke()
+  }
+  const m = time.getMinutes()
+  hand(((time.getHours() % 12) + m / 60) / 12, r * 0.5, r * 0.09, '#1e293b')
+  hand(m / 60, r * 0.75, r * 0.06, accent)
+  ctx.fillStyle = accent
+  ctx.beginPath()
+  ctx.arc(0, 0, r * 0.08, 0, Math.PI * 2)
+  ctx.fill()
+  ctx.restore()
+}
+
 /**
  * The standings as a PNG, ready to share: a header with court lines, a flying
  * shuttlecock and confetti, then one row per player with places and ties.
@@ -260,37 +341,8 @@ export function standingsImage(rows: StandingRow[], { title, subtitle }: { title
 
   const top = y + 20
   const rowTop = (i: number) => top + i * ROW
-  // Stripes first, so the place badges and brackets (which span tied rows) draw over them.
-  rows.forEach((_, i) => {
-    if (i % 2) return
-    ctx.fillStyle = '#f8fafc'
-    ctx.fillRect(PAD / 2, rowTop(i), W - PAD, ROW)
-  })
-  // One badge per place, centred on the tied rows, with a bracket joining them.
-  rows.forEach((r, i) => {
-    if (r.place === rows[i - 1]?.place) return
-    const tied = rows.filter((x) => x.place === r.place).length
-    const [fill, line] = MEDALS[r.place] ?? ['#f1f5f9', '#cbd5e1']
-    const mid = rowTop(i) + (tied * ROW) / 2
-    ctx.fillStyle = fill
-    ctx.beginPath()
-    ctx.roundRect(col.rank - 30, mid - 20, 60, 40, 20)
-    ctx.fill()
-    text(ordinal(r.place), col.rank, mid + 1, 22, '#1e293b', 800, 'center')
-    if (tied > 1) {
-      const x = col.rank + 42
-      const [y0, y1] = [rowTop(i) + 12, rowTop(i + tied) - 12]
-      ctx.strokeStyle = line
-      ctx.lineWidth = 4
-      ctx.lineJoin = 'round'
-      ctx.beginPath()
-      ctx.moveTo(x + 10, y0)
-      ctx.lineTo(x, y0)
-      ctx.lineTo(x, y1)
-      ctx.lineTo(x + 10, y1)
-      ctx.stroke()
-    }
-  })
+  stripes(ctx, rows.length, top)
+  placeBadges(ctx, rows.map((r) => r.place), col.rank, top)
   rows.forEach((r, i) => {
     const mid = rowTop(i) + ROW / 2
     ctx.font = `600 34px ${FONT}`
@@ -303,6 +355,106 @@ export function standingsImage(rows: StandingRow[], { title, subtitle }: { title
 
   ctx.textBaseline = 'alphabetic'
   text('P played · W won · L lost · ranked by wins, then win % · same record = same place', PAD, c.height - 45, 24, '#94a3b8', 500)
+  return png(c)
+}
+
+export interface CheckinImageRow {
+  name: string
+  place: number
+  sessions: number
+  firsts: number
+  /** Average minutes after the first arrival. */
+  after: number
+  /** Check-in time, for one session. */
+  at?: number
+}
+
+/**
+ * Check-in standings as a PNG: a night-to-sunrise sky with a clock (at the
+ * first arrival's time) and a shuttle flying past, then everyone in order of
+ * arrival. One session shows times; several show sessions, firsts and the
+ * average minutes after the first arrival.
+ */
+export function checkinImage(rows: CheckinImageRow[], { title, subtitle }: { title: string; subtitle: string }): Blob {
+  const [c, ctx] = canvas(W, HEAD + 70 + rows.length * ROW + FOOT)
+  const text = writer(ctx)
+  const single = rows.some((r) => r.at !== undefined)
+  const firstAt = Math.min(...rows.map((r) => r.at ?? Infinity))
+
+  ctx.fillStyle = '#ffffff'
+  ctx.fillRect(0, 0, W, c.height)
+  const sky = ctx.createLinearGradient(0, 0, W, HEAD)
+  sky.addColorStop(0, '#1e1b4b')
+  sky.addColorStop(0.55, '#4338ca')
+  sky.addColorStop(1, '#f59e0b')
+  ctx.fillStyle = sky
+  ctx.fillRect(0, 0, W, HEAD)
+  ctx.save()
+  ctx.beginPath()
+  ctx.rect(0, 0, W, HEAD)
+  ctx.clip()
+  // A rising sun behind the clock, and stars on the night side.
+  const sun = ctx.createRadialGradient(900, HEAD, 10, 900, HEAD, 260)
+  sun.addColorStop(0, 'rgba(253,230,138,0.85)')
+  sun.addColorStop(1, 'rgba(253,230,138,0)')
+  ctx.fillStyle = sun
+  ctx.fillRect(560, 0, 520, HEAD)
+  confetti(ctx, 380, 8, 420, HEAD - 16, ['#ffffff', '#fde68a', '#c7d2fe'], 22, 3)
+  clockFace(ctx, 900, 128, 92, Number.isFinite(firstAt) ? new Date(firstAt) : new Date(2026, 0, 1, 18, 0), '#d97706')
+  flyingShuttle(ctx, 790, 70, 105, '#4338ca', 'rgba(255,255,255,0.45)')
+  ctx.restore()
+
+  ctx.textBaseline = 'alphabetic'
+  text("My Badminton Queue · Serve N' Shout", PAD, 76, 28, 'rgba(255,255,255,0.8)')
+  text(title, PAD, 160, 62, '#ffffff', 800)
+  text(subtitle, PAD, 214, 30, 'rgba(255,255,255,0.88)', 500)
+
+  const clock = (ms: number) => new Date(ms).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
+  const after = (m: number) => (single && !Math.round(m) ? 'First' : `+${Math.round(m)} min`)
+  const col = { rank: PAD + 26, name: PAD + 92, a: 590, b: 735, c: W - PAD }
+  const head: [string, number, CanvasTextAlign][] = single
+    ? [
+        ['#', col.rank, 'center'],
+        ['Player', col.name, 'left'],
+        ['Checked in', col.b, 'center'],
+        ['After first', col.c, 'right'],
+      ]
+    : [
+        ['#', col.rank, 'center'],
+        ['Player', col.name, 'left'],
+        ['Sessions', col.a, 'center'],
+        ['Firsts', col.b, 'center'],
+        ['Avg after first', col.c, 'right'],
+      ]
+  const y = HEAD + 50
+  ctx.textBaseline = 'middle'
+  for (const [label, x, align] of head) text(label, x, y, 24, '#64748b', 700, align)
+
+  const top = y + 20
+  stripes(ctx, rows.length, top)
+  placeBadges(ctx, rows.map((r) => r.place), col.rank, top)
+  rows.forEach((r, i) => {
+    const mid = top + i * ROW + ROW / 2
+    ctx.font = `600 34px ${FONT}`
+    text(fit(ctx, r.name, (single ? col.b - 110 : col.a - 80) - col.name), col.name, mid, 34, '#0f172a')
+    if (single) {
+      text(clock(r.at!), col.b, mid, 32, '#4338ca', 700, 'center')
+    } else {
+      text(String(r.sessions), col.a, mid, 30, '#64748b', 500, 'center')
+      text(String(r.firsts), col.b, mid, 32, '#b45309', 800, 'center')
+    }
+    text(after(r.after), col.c, mid, 32, '#0f172a', 700, 'right')
+  })
+
+  ctx.textBaseline = 'alphabetic'
+  text(
+    single ? 'Ranked by check-in time · same minute = same place' : 'Ranked by average minutes after the first arrival, then most firsts',
+    PAD,
+    c.height - 45,
+    24,
+    '#94a3b8',
+    500,
+  )
   return png(c)
 }
 

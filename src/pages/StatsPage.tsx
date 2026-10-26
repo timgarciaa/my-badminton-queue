@@ -3,6 +3,8 @@ import { shuttlesUsed } from '../lib/cost'
 import {
   arrivals,
   bestRecord,
+  checkinPlaces,
+  checkinStandings,
   duoRecords,
   finishedGames,
   gameExtremes,
@@ -18,9 +20,9 @@ import {
   worstRecord,
   type PlayerRecord,
 } from '../lib/stats'
-import { ShareIcon, Standings } from '../components/Standings'
+import { PlaceCell, ShareIcon, Standings } from '../components/Standings'
 import { EmptyState } from '../components/ui'
-import { awardImage, shareImage, type AwardTone } from '../lib/shareImage'
+import { awardImage, checkinImage, shareImage, type AwardTone } from '../lib/shareImage'
 import { usePlayerMap, useStore } from '../store/useStore'
 import type { Pair, Session } from '../types'
 
@@ -264,16 +266,19 @@ function Dashboard({
       </div>
 
       <div className="grid grid-cols-2 items-start gap-5">
-        <Standings
-          games={games}
-          title={scope === 'All time' ? 'All-time standings' : scope === 'Last 3 months' ? 'Standings · last 3 months' : 'Standings'}
-          subtitle={
-            showDate
-              ? `${sessionCount} ${sessionCount === 1 ? 'session' : 'sessions'} · ${games.length} games`
-              : `${scope} · ${games.length} ${games.length === 1 ? 'game' : 'games'}`
-          }
-          filename={`standings-${scope.toLowerCase().replace(/[^a-z0-9]+/g, '-')}.png`}
-        />
+        <div className="space-y-5">
+          <Standings
+            games={games}
+            title={scope === 'All time' ? 'All-time standings' : scope === 'Last 3 months' ? 'Standings · last 3 months' : 'Standings'}
+            subtitle={
+              showDate
+                ? `${sessionCount} ${sessionCount === 1 ? 'session' : 'sessions'} · ${games.length} games`
+                : `${scope} · ${games.length} ${games.length === 1 ? 'game' : 'games'}`
+            }
+            filename={`standings-${scope.toLowerCase().replace(/[^a-z0-9]+/g, '-')}.png`}
+          />
+          <CheckinStandings sessions={sessions} name={name} />
+        </div>
         <div className="space-y-5">
           <DuoTable duos={duos} names={names} />
           <StreakTable runs={runs} records={records} name={name} />
@@ -346,6 +351,89 @@ function Award({
         <p className="mt-2 text-sm text-slate-400">{empty}</p>
       )}
     </div>
+  )
+}
+
+/**
+ * Who checks in earliest. One session lists everyone in order with times;
+ * several rank by average minutes after the first arrival.
+ */
+function CheckinStandings({ sessions, name }: { sessions: Session[]; name: (id: string) => string }) {
+  const scope = useContext(ScopeLabel)
+  const rows = checkinStandings(sessions)
+  const place = checkinPlaces(rows)
+  const single = rows.some((r) => r.at !== undefined)
+  const counted = sessions.filter((s) => s.attendees.length >= 2).length
+  const clock = (ms: number) => new Date(ms).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
+  // "First" only for one session; an average near 0 isn't always first.
+  const after = (m: number) => (single && !Math.round(m) ? 'First' : `+${Math.round(m)} min`)
+
+  const share = () => {
+    const image = checkinImage(
+      rows.map((r, i) => ({ ...r, name: name(r.id), place: place[i] })),
+      {
+        title: 'Check-in standings',
+        subtitle: single ? scope : `${scope} · ${counted} sessions`,
+      },
+    )
+    void shareImage(image, `check-in-${scope.toLowerCase().replace(/[^a-z0-9]+/g, '-')}.png`, 'Check-in standings')
+  }
+
+  return (
+    <section className="d-card d-card-border overflow-hidden bg-base-100 shadow-sm">
+      <div className="flex items-center justify-between gap-2 border-b border-slate-100 px-4 py-3">
+        <div>
+          <h3 className="text-lg font-bold">Check-in standings</h3>
+          <p className="text-xs text-slate-500">
+            {single ? 'In order of check-in' : 'By average minutes after the first arrival'}
+          </p>
+        </div>
+        <button className="d-btn d-btn-primary d-btn-soft h-11" disabled={rows.length === 0} onClick={share}>
+          <ShareIcon />
+          Share
+        </button>
+      </div>
+      {rows.length === 0 ? (
+        <p className="p-5 text-slate-500">Needs at least two players checked in.</p>
+      ) : (
+        <table className="d-table d-table-sm w-full table-fixed tabular-nums">
+          <thead>
+            <tr>
+              <th className="w-16">#</th>
+              <th>Player</th>
+              {single ? (
+                <th className="w-24 text-center">Checked in</th>
+              ) : (
+                <>
+                  <th className="w-20 text-center">Sessions</th>
+                  <th className="w-16 text-center">Firsts</th>
+                </>
+              )}
+              <th className="w-24 text-right">{single ? 'After first' : 'Avg after'}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r, i) => (
+              <tr key={r.id}>
+                <PlaceCell places={place} i={i} />
+                <td className="truncate text-base font-semibold" title={name(r.id)}>
+                  {name(r.id)}
+                </td>
+                {single ? (
+                  <td className="text-center font-semibold text-indigo-700">{clock(r.at!)}</td>
+                ) : (
+                  <>
+                    <td className="text-center">{r.sessions}</td>
+                    <td className="text-center font-bold text-amber-700">{r.firsts}</td>
+                  </>
+                )}
+                <td className="text-right font-semibold">{after(r.after)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </section>
   )
 }
 

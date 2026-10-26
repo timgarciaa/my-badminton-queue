@@ -5,7 +5,7 @@ import { costSummary, courtBooking, money, sessionStarted, shuttleCount, shuttle
 import type { Help } from './balance'
 import { parseNames } from './importNames'
 import { matchSkill, planGames, winnersStayGame } from './plan'
-import { arrivals, bestRecord, duoRecords, mostOften, gameExtremes, gameTime, helpFrom, ordinal, places, playedGames, sessionsWithin, standings, playerRecords, rivalries, streaks, winRate, worstRecord } from './stats'
+import { arrivals, bestRecord, checkinPlaces, checkinStandings, duoRecords, mostOften, gameExtremes, gameTime, helpFrom, ordinal, places, playedGames, sessionsWithin, standings, playerRecords, rivalries, streaks, winRate, worstRecord } from './stats'
 import { dequeue, enqueue, move, nextFour, pushFront, swap } from './queue'
 import { isHelpStruggling, isSkillMatch, newSession, useStore } from '../store/useStore'
 
@@ -981,5 +981,33 @@ describe('arrivals', () => {
     expect(mostOften(['a', 'c', 'a'])).toEqual({ ids: ['a'], times: 2 })
     expect(mostOften(['a', 'c'])).toEqual({ ids: ['a', 'c'], times: 1 })
     expect(mostOften([])).toEqual({ ids: [], times: 0 })
+  })
+
+  it('ranks one session by check-in time, minutes after the first', () => {
+    const rows = checkinStandings([session({ b: 3 * 60_000, a: 0, c: 20_000, d: 10 * 60_000 })])
+    expect(rows.map((r) => [r.id, Math.round(r.after), r.at])).toEqual([
+      ['a', 0, 0],
+      ['c', 0, 20_000],
+      ['b', 3, 3 * 60_000],
+      ['d', 10, 10 * 60_000],
+    ])
+    // a and c checked in within the same minute: both 1st.
+    expect(checkinPlaces(rows)).toEqual([1, 1, 2, 3])
+  })
+
+  it('ranks several sessions by average minutes after the first, then most firsts', () => {
+    const min = 60_000
+    const rows = checkinStandings([
+      session({ a: 0, b: 10 * min, c: 4 * min }),
+      session({ b: 0, a: 2 * min, c: 6 * min }),
+      session({ c: 0 }), // only one player: skipped
+    ])
+    expect(rows.map((r) => [r.id, r.sessions, r.firsts, r.after])).toEqual([
+      ['a', 2, 1, 1],
+      ['b', 2, 1, 5],
+      ['c', 2, 0, 5],
+    ])
+    expect(rows[0].at).toBeUndefined()
+    expect(checkinPlaces(rows)).toEqual([1, 2, 2])
   })
 })
