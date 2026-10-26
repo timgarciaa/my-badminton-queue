@@ -1,12 +1,14 @@
 import { createContext, useContext, useState, type ReactNode } from 'react'
 import { shuttlesUsed } from '../lib/cost'
 import {
+  arrivals,
   bestRecord,
   duoRecords,
   finishedGames,
   gameExtremes,
   gameTime,
   longDate,
+  mostOften,
   playedGames,
   playerRecords,
   rivalries,
@@ -168,13 +170,19 @@ function Dashboard({
   const which = (g: NonNullable<typeof longest>) => `Game ${g.number} · Court ${g.court}`
   const teams = (g: NonNullable<typeof longest>) =>
     `${names(g.teamA)} vs ${names(g.teamB)}${showDate ? ` · ${longDate(g.date)}` : ''}`
+  // Arrivals: one session shows times; several show who was first or last most often.
+  const arrived = arrivals(sessions)
+  const clock = (ms: number) => new Date(ms).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
+  const early = mostOften(arrived.map((a) => a.first))
+  const late = mostOften(arrived.map((a) => a.last))
+  const often = (times: number, what: string) => `${what} in ${times} of ${arrived.length} sessions`
   const scope = useContext(ScopeLabel)
   const sessionCount = sessions.filter((s) => s.games.length).length
   const who = (ids: string[]) => (ids.length > 2 ? `${name(ids[0])}, ${name(ids[1])} +${ids.length - 2}` : ids.map(name).join(' & '))
 
   return (
     <>
-      <div className="grid grid-cols-5 gap-4">
+      <div className="grid grid-cols-4 gap-4">
         <Award title="Unbeatable duo" tone="emerald" who={bestDuo && names(bestDuo.pair)} value={bestDuo && record(bestDuo)}>
           {bestDuo && `${pct(bestDuo)} · ${bestDuo.played} ${bestDuo.played === 1 ? 'game' : 'games'} together`}
         </Award>
@@ -233,6 +241,26 @@ function Dashboard({
         >
           {shortest && teams(shortest)}
         </Award>
+        <Award
+          title="Early bird"
+          tone="cyan"
+          who={arrived.length ? who(early.ids) : undefined}
+          value={arrived.length === 1 ? clock(arrived[0].firstAt) : arrived.length ? `${early.times}×` : undefined}
+          empty="Needs at least two players checked in"
+        >
+          {arrived.length === 1 ? 'first to check in' : often(early.times, 'first to arrive')}
+        </Award>
+        <Award
+          title="Last to arrive"
+          tone="fuchsia"
+          who={arrived.length ? who(late.ids) : undefined}
+          value={arrived.length === 1 ? clock(arrived[0].lastAt) : arrived.length ? `${late.times}×` : undefined}
+          empty="Needs at least two players checked in"
+        >
+          {arrived.length === 1
+            ? `${Math.round((arrived[0].lastAt - arrived[0].firstAt) / 60_000)} min after the first`
+            : often(late.times, 'last to arrive')}
+        </Award>
       </div>
 
       <div className="grid grid-cols-2 items-start gap-5">
@@ -269,6 +297,8 @@ const TONES: Record<AwardTone, string> = {
   teal: 'border-t-teal-600 text-teal-700',
   indigo: 'border-t-indigo-500 text-indigo-700',
   lime: 'border-t-lime-500 text-lime-700',
+  cyan: 'border-t-cyan-500 text-cyan-700',
+  fuchsia: 'border-t-fuchsia-500 text-fuchsia-700',
 }
 
 function Award({

@@ -318,6 +318,8 @@ export const AWARD_TONES = {
   teal: ['#134e4a', '#0d9488', '#99f6e4'],
   indigo: ['#312e81', '#4f46e5', '#c7d2fe'],
   lime: ['#365314', '#65a30d', '#d9f99d'],
+  cyan: ['#164e63', '#0891b2', '#a5f3fc'],
+  fuchsia: ['#701a75', '#c026d3', '#f5d0fe'],
 } as const
 
 export type AwardTone = keyof typeof AWARD_TONES

@@ -246,3 +246,29 @@ export function helpFrom(games: Game[]): Help {
   const streak = new Map([...runs].filter(([, r]) => r.current > 0).map(([id, r]) => [id, r.current]))
   return { struggling, streak }
 }
+
+/** Who checked in first and last in one session. */
+export interface Arrival {
+  first: string
+  last: string
+  firstAt: number
+  lastAt: number
+}
+
+/** First and last to check in, for each session with at least two players. */
+export function arrivals(sessions: Session[]): Arrival[] {
+  return sessions.flatMap((s) => {
+    if (s.attendees.length < 2) return []
+    const order = [...s.attendees].sort((a, b) => a.checkedInAt - b.checkedInAt)
+    const [first, last] = [order[0], order[order.length - 1]]
+    return [{ first: first.playerId, last: last.playerId, firstAt: first.checkedInAt, lastAt: last.checkedInAt }]
+  })
+}
+
+/** Players who were first (or last) most often, and how many times. */
+export function mostOften(ids: string[]): { ids: string[]; times: number } {
+  const counts = new Map<string, number>()
+  for (const id of ids) counts.set(id, (counts.get(id) ?? 0) + 1)
+  const times = Math.max(0, ...counts.values())
+  return { ids: [...counts].filter(([, n]) => n === times).map(([id]) => id), times }
+}

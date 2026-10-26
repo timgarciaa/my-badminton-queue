@@ -5,7 +5,7 @@ import { costSummary, courtBooking, money, sessionStarted, shuttleCount, shuttle
 import type { Help } from './balance'
 import { parseNames } from './importNames'
 import { matchSkill, planGames, winnersStayGame } from './plan'
-import { bestRecord, duoRecords, gameExtremes, gameTime, helpFrom, ordinal, places, playedGames, sessionsWithin, standings, playerRecords, rivalries, streaks, winRate, worstRecord } from './stats'
+import { arrivals, bestRecord, duoRecords, mostOften, gameExtremes, gameTime, helpFrom, ordinal, places, playedGames, sessionsWithin, standings, playerRecords, rivalries, streaks, winRate, worstRecord } from './stats'
 import { dequeue, enqueue, move, nextFour, pushFront, swap } from './queue'
 import { isHelpStruggling, isSkillMatch, newSession, useStore } from '../store/useStore'
 
@@ -954,5 +954,32 @@ describe('out of hours', () => {
     st.setWinner(id, 'A')
     st.setOutOfHours(id, true)
     expect(useStore.getState().history[0].games[0].outOfHours).toBeUndefined()
+  })
+})
+
+describe('arrivals', () => {
+  const session = (checkIns: Record<string, number>) => ({
+    ...newSession(),
+    attendees: Object.entries(checkIns).map(([playerId, checkedInAt]) => ({
+      playerId,
+      checkedInAt,
+      gamesPlayed: 0,
+      paid: false,
+      resting: false,
+    })),
+  })
+
+  it('finds who checked in first and last in each session, skipping sessions with fewer than two', () => {
+    const list = arrivals([session({ b: 300, a: 100, c: 200 }), session({ a: 50 }), session({ c: 10, b: 20 })])
+    expect(list).toEqual([
+      { first: 'a', last: 'b', firstAt: 100, lastAt: 300 },
+      { first: 'c', last: 'b', firstAt: 10, lastAt: 20 },
+    ])
+  })
+
+  it('counts who was first or last most often, with ties', () => {
+    expect(mostOften(['a', 'c', 'a'])).toEqual({ ids: ['a'], times: 2 })
+    expect(mostOften(['a', 'c'])).toEqual({ ids: ['a', 'c'], times: 1 })
+    expect(mostOften([])).toEqual({ ids: [], times: 0 })
   })
 })
