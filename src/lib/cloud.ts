@@ -1,7 +1,7 @@
 import { useEffect } from 'react'
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-import { useStore } from '../store/useStore'
+import { newSession, useStore } from '../store/useStore'
 import type { Player, Session } from '../types'
 import { CHECKIN_API } from './remoteCheckin'
 
@@ -32,6 +32,8 @@ interface Auth {
 export interface Club {
   id: string
   name: string
+  /** For people asking to join; missing until the club's first sign-in after join codes came in. */
+  code?: string
 }
 
 interface CloudState {
@@ -41,6 +43,8 @@ interface CloudState {
   rev: number
   /** Hash of each document as last saved, so only changes are sent. */
   saved: Record<string, string>
+  /** The club this device's data last went to; kept after signing out. */
+  lastClubId?: string
 }
 
 export const useCloud = create<CloudState>()(persist(() => ({ rev: 0, saved: {} }), { name: 'mbq-cloud' }))
@@ -50,10 +54,15 @@ export const useCloud = create<CloudState>()(persist(() => ({ rev: 0, saved: {} 
  * since; the organizer picks which data to keep. expired: sign in again.
  */
 export type SyncStatus = 'saved' | 'saving' | 'offline' | 'conflict' | 'expired'
-export const useSyncStatus = create<{ status: SyncStatus; savedAt?: number }>(() => ({ status: 'saved' }))
+export const useSyncStatus = create<{ status: SyncStatus; savedAt?: number; waiting: number }>(() => ({
+  status: 'saved',
+  /** People asking to join the club, for its organizers to approve. */
+  waiting: 0,
+}))
 
-const fail = (message: string, status?: number) => Object.assign(new Error(message), { status })
-type Failure = Error & { status?: number }
+const fail = (message: string, status?: number, data?: Record<string, string>) =>
+  Object.assign(new Error(message), { status, data })
+type Failure = Error & { status?: number; data?: Record<string, string> }
 
 /** Calls Cognito (or the dev server's stand-in): InitiateAuth and friends. */
 async function cognito<T>(action: string, body: unknown): Promise<T> {
@@ -101,7 +110,7 @@ async function api<T>(method: string, path: string, body?: unknown): Promise<T> 
     body: body === undefined ? undefined : JSON.stringify(body),
   })
   const data = await res.json().catch(() => ({}))
-  if (!res.ok) throw fail(data.error ?? res.statusText, res.status)
+  if (!res.ok) throw fail(data.error ?? res.statusText, res.status, data)
   return data as T
 }
 
@@ -237,12 +246,40 @@ export async function save() {
   }
 }
 
-/** Save shortly after every change while signed in; right away when the app is put away. */
+export interface Member {
+  username: string
+  approved: boolean
+  requestedAt: number
+}
+
+export const fetchMembers = () => api<{ members: Member[] }>('GET', '/club/members').then((r) => r.members)
+
+/** Approve someone asking to join, or decline them (or remove an organizer). */
+export async function decideMember(username: string, approve: boolean) {
+  await api('POST', '/club/members', { username, approve })
+  await refreshWaiting()
+}
+
+async function refreshWaiting() {
+  try {
+    const members = await fetchMembers()
+    useSyncStatus.setState({ waiting: members.filter((m) => !m.approved).length })
+  } catch {
+    // Checked again later.
+  }
+}
+
+/**
+ * Save shortly after every change while signed in; right away when the app
+ * is put away. Also checks now and then for people asking to join.
+ */
 export function useCloudSync() {
   const signedIn = useCloud((s) => !!s.auth && !!s.club)
   useEffect(() => {
     if (!CLOUD || !signedIn) return
     scheduleSave(500)
+    void refreshWaiting()
+    const requests = window.setInterval(() => document.visibilityState === 'visible' && void refreshWaiting(), 5 * 60_000)
     const unsubscribe = useStore.subscribe((st, prev) => {
       if (st.players !== prev.players || st.session !== prev.session || st.history !== prev.history) scheduleSave()
     })
@@ -253,6 +290,7 @@ export function useCloudSync() {
     return () => {
       unsubscribe()
       clearTimeout(timer)
+      clearInterval(requests)
       document.removeEventListener('visibilitychange', hidden)
       window.removeEventListener('online', online)
     }
@@ -279,14 +317,53 @@ export type Choice = 'upload' | 'download' | 'ask'
 
 function choose(snap: ClubSnapshot, before: { clubId?: string; rev: number }): Choice {
   const local = useStore.getState()
-  if (Object.keys(snap.docs).length === 0) return 'upload'
+  // This device's data belongs to another club: never pass it on without asking.
+  const otherClub = !!useCloud.getState().lastClubId && useCloud.getState().lastClubId !== snap.club.id
+  if (Object.keys(snap.docs).length === 0) return hasData(local) && otherClub ? 'ask' : 'upload'
   if (!hasData(local)) return 'download'
   if (before.clubId === snap.club.id && before.rev === snap.rev) return 'upload'
   return changes(toDocs(local), hashes(snap.docs)).length === 0 ? 'upload' : 'ask'
 }
 
-/** Signs in and fetches the club, with whose data to use (see Choice). */
-export async function signIn(username: string, password: string): Promise<{ snap: ClubSnapshot; choice: Choice }> {
+/** Waiting for approval: of a new club (by the app admin) or to join one (by its organizers). */
+export interface Pending {
+  kind: 'club' | 'member'
+  clubName: string
+}
+
+export type SignInResult = { snap: ClubSnapshot; choice: Choice } | { pending: Pending }
+
+/** Fetches the club after signing in: its data, with whose to use, or that the account is waiting. */
+async function enter(before: { clubId?: string; rev: number }): Promise<SignInResult> {
+  try {
+    const snap = await fetchClub()
+    return { snap, choice: choose(snap, before) }
+  } catch (e) {
+    const f = e as Failure
+    if (f.status === 403 && (f.data?.pending === 'club' || f.data?.pending === 'member')) {
+      return { pending: { kind: f.data.pending, clubName: f.data.clubName } }
+    }
+    useCloud.setState({ auth: undefined })
+    throw f.status === 403 ? fail("This account isn't an organizer of any club.") : e
+  }
+}
+
+/** For an account waiting for approval: has it been approved yet? */
+export const checkAgain = () => enter({ rev: 0 })
+
+/** Asks for an account, to create a club or join one by its code. */
+export async function signUp(username: string, password: string, club: { create: string } | { join: string }) {
+  const res = await fetch(`${CHECKIN_API}/signup`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ username: username.trim(), password, ...club }),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw fail(data.error ?? 'Something went wrong. Try again.', res.status)
+}
+
+/** Signs in and fetches the club (see SignInResult). */
+export async function signIn(username: string, password: string): Promise<SignInResult> {
   const before = { clubId: useCloud.getState().club?.id, rev: useCloud.getState().rev }
   const r = await cognito<AuthResult>('InitiateAuth', {
     AuthFlow: 'USER_PASSWORD_AUTH',
@@ -306,13 +383,7 @@ export async function signIn(username: string, password: string): Promise<{ snap
     rev: 0,
     saved: {},
   })
-  try {
-    const snap = await fetchClub()
-    return { snap, choice: choose(snap, before) }
-  } catch (e) {
-    useCloud.setState({ auth: undefined })
-    throw (e as Failure).status === 403 ? fail("This account isn't an organizer of any club.") : e
-  }
+  return enter(before)
 }
 
 /** Whether there is anything worth keeping in this data. */
@@ -322,20 +393,28 @@ export const hasData = (d: Partial<ClubData>) =>
 /** Replace this device's data with the club's. */
 export function takeClubData(snap: ClubSnapshot) {
   const data = fromDocs(snap.docs)
-  useStore.getState().importData(data)
-  useCloud.setState({ club: snap.club, rev: snap.rev, saved: hashes(snap.docs) })
+  // A club with nothing saved yet starts this device on a fresh session too.
+  useStore.getState().importData({ ...data, session: data.session ?? newSession() })
+  useCloud.setState({ club: snap.club, rev: snap.rev, saved: hashes(snap.docs), lastClubId: snap.club.id })
   useSyncStatus.setState({ status: 'saved', savedAt: Date.now() })
 }
 
 /** Keep this device's data and save it over the club's. */
 export function keepThisDevice(snap: ClubSnapshot) {
-  useCloud.setState({ club: snap.club, rev: snap.rev, saved: hashes(snap.docs) })
+  useCloud.setState({ club: snap.club, rev: snap.rev, saved: hashes(snap.docs), lastClubId: snap.club.id })
   useSyncStatus.setState({ status: 'saving' })
   void save()
+}
+
+/** Signed out by the server (e.g. a year passed): sign in again, keeping the club's place. */
+export function signInAgain() {
+  clearTimeout(timer)
+  useCloud.setState({ auth: undefined })
+  useSyncStatus.setState({ status: 'saved' })
 }
 
 export function signOut() {
   clearTimeout(timer)
   useCloud.setState({ auth: undefined, club: undefined, rev: 0, saved: {} })
-  useSyncStatus.setState({ status: 'saved', savedAt: undefined })
+  useSyncStatus.setState({ status: 'saved', savedAt: undefined, waiting: 0 })
 }

@@ -21,7 +21,7 @@ Resources:
         AttributeName: expires
         Enabled: true
 
-  # Club data: { pk: club#<id>, sk: meta, name, rev } and one { pk, sk: doc#<id>, data } per document.
+  # Clubs, their documents, organizers and join codes (see server/lambda.mjs).
   ClubTable:
     Type: AWS::DynamoDB::Table
     DeletionPolicy: Retain
@@ -38,8 +38,8 @@ Resources:
       PointInTimeRecoverySpecification:
         PointInTimeRecoveryEnabled: true
 
-  # Organizer accounts: username and password only, created with server/club.sh
-  # (no sign-up page, no email). custom:club says which club they organize.
+  # Organizer accounts: username and password only, no email. Made by the API's
+  # sign-up (or server/club.sh); which club they organize is in the club table.
   UserPool:
     Type: AWS::Cognito::UserPool
     DeletionPolicy: Retain
@@ -100,8 +100,19 @@ Resources:
                 Action: [dynamodb:GetItem, dynamodb:PutItem, dynamodb:UpdateItem, dynamodb:DeleteItem]
                 Resource: !GetAtt Table.Arn
               - Effect: Allow
-                Action: [dynamodb:Query, dynamodb:PutItem, dynamodb:UpdateItem, dynamodb:DeleteItem, dynamodb:ConditionCheckItem]
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:Query
+                  - dynamodb:Scan
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:DeleteItem
+                  - dynamodb:ConditionCheckItem
                 Resource: !GetAtt ClubTable.Arn
+              # Sign-up makes accounts; declining a request deletes one.
+              - Effect: Allow
+                Action: [cognito-idp:AdminCreateUser, cognito-idp:AdminSetUserPassword, cognito-idp:AdminDeleteUser]
+                Resource: !GetAtt UserPool.Arn
 
   Function:
     Type: AWS::Lambda::Function

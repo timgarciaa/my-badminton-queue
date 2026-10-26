@@ -1,16 +1,19 @@
-import { useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import {
   CLOUD,
   type ClubSnapshot,
+  decideMember,
   fetchClub,
+  fetchMembers,
   fromDocs,
   keepThisDevice,
-  signIn,
+  type Member,
   signOut,
   takeClubData,
   useCloud,
   useSyncStatus,
 } from '../lib/cloud'
+import { exportBackup } from '../lib/backup'
 import { useStore } from '../store/useStore'
 
 const time = (at: number) => new Date(at).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
@@ -90,7 +93,7 @@ export function CloudBanner({ onSignIn }: { onSignIn: () => void }) {
       ) : (
         <>
           <span className="flex-1">
-            Signed out of <strong>{club.name}</strong>. Sign in again to keep saving; this iPad keeps working meanwhile.
+            Signed out of <strong>{club.name}</strong>. Sign in again to keep saving.
           </span>
           <button className="d-btn d-btn-sm d-btn-warning" onClick={onSignIn}>
             Sign in
@@ -101,106 +104,144 @@ export function CloudBanner({ onSignIn }: { onSignIn: () => void }) {
   )
 }
 
-/** Settings card: sign in to a club, see that it's saving, sign out. */
+/** Settings card: the club this iPad saves to, its join code, its organizers, and signing out. */
 export function ClubAccountCard() {
   const auth = useCloud((s) => s.auth)
   const club = useCloud((s) => s.club)
   const status = useSyncStatus((s) => s.status)
   const savedAt = useSyncStatus((s) => s.savedAt)
-  const [username, setUsername] = useState(auth?.username ?? '')
-  const [password, setPassword] = useState('')
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [choosing, setChoosing] = useState<ClubSnapshot | null>(null)
-  if (!CLOUD) return null
-
-  const submit = async () => {
-    setBusy(true)
-    setError(null)
-    try {
-      const { snap, choice } = await signIn(username, password)
-      setPassword('')
-      if (choice === 'upload') keepThisDevice(snap)
-      else if (choice === 'download') takeClubData(snap)
-      else setChoosing(snap)
-    } catch (e) {
-      setError(e instanceof TypeError ? "Can't connect. Check the internet connection." : (e as Error).message)
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  const signedIn = auth && club && status !== 'expired'
+  if (!CLOUD || !auth || !club) return null
 
   return (
     <div className="d-card d-card-border bg-base-100 shadow-sm">
       <div className="d-card-body gap-3 p-4">
         <h2 className="d-card-title text-lg">
           <CloudIcon className="h-5 w-5 text-teal-700" />
-          Club account
+          {club.name}
         </h2>
-        {signedIn ? (
-          <>
-            <p className="text-sm text-slate-600">
-              Signed in as <strong>{auth.username}</strong>. This iPad saves to <strong>{club.name}</strong> a few seconds
-              after each change, and catches up when it&apos;s back online.
+        <p className="text-sm text-slate-600">
+          Signed in as <strong>{auth.username}</strong>. This iPad saves to the club a few seconds after each change,
+          and catches up when it&apos;s back online.
+        </p>
+        <p className={`text-sm font-semibold ${status === 'saved' || status === 'saving' ? 'text-teal-700' : 'text-amber-700'}`}>
+          {LABELS[status]}
+          {status === 'saved' && savedAt && ` at ${time(savedAt)}`}
+        </p>
+        {club.code && (
+          <div className="rounded-xl bg-slate-50 px-3 py-2 ring-1 ring-slate-200">
+            <div className="text-xs font-bold tracking-wide text-slate-500 uppercase">Join code</div>
+            <div className="font-mono text-2xl font-black tracking-[0.2em] text-slate-800 select-text">{club.code}</div>
+            <p className="text-xs text-slate-500">
+              New organizers enter this when they create an account. You approve them here.
             </p>
-            <p className="text-sm font-semibold text-teal-700">
-              {LABELS[status]}
-              {status === 'saved' && savedAt && ` at ${time(savedAt)}`}
-            </p>
-            <button
-              className="d-btn d-btn-sm self-start"
-              onClick={() =>
-                confirm(`Sign out of ${club.name}? This iPad keeps its data but stops saving to the club.`) && signOut()
-              }
-            >
-              Sign out
-            </button>
-          </>
-        ) : (
-          <form
-            className="space-y-2"
-            onSubmit={(e) => {
-              e.preventDefault()
-              void submit()
-            }}
-          >
-            <p className="text-sm text-slate-600">
-              Organizers sign in to save this iPad&apos;s players and sessions to their club, so nothing is lost if the
-              iPad is.
-            </p>
-            <input
-              className="field py-2 text-base"
-              placeholder="Username"
-              autoCapitalize="none"
-              autoCorrect="off"
-              autoComplete="username"
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-            />
-            <input
-              className="field py-2 text-base"
-              type="password"
-              placeholder="Password"
-              autoComplete="current-password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-            />
-            {error && <p className="text-sm font-semibold text-rose-700">{error}</p>}
-            <button className="d-btn d-btn-primary w-full" disabled={busy || !username.trim() || !password}>
-              {busy ? 'Signing in…' : 'Sign in'}
-            </button>
-          </form>
+          </div>
         )}
+        <Organizers me={auth.username} />
+        <button
+          className="d-btn d-btn-sm self-start"
+          onClick={() =>
+            confirm(`Sign out of ${club.name}? This iPad keeps its data but stops saving to the club.`) && signOut()
+          }
+        >
+          Sign out
+        </button>
       </div>
-      {choosing && <ChooseDataDialog snap={choosing} onDone={() => setChoosing(null)} />}
+    </div>
+  )
+}
+
+/** The club's organizers, and people asking to join: approve or decline. */
+function Organizers({ me }: { me: string }) {
+  const waiting = useSyncStatus((s) => s.waiting)
+  const [members, setMembers] = useState<Member[] | null>(null)
+  const [failed, setFailed] = useState(false)
+  const [busy, setBusy] = useState<string | null>(null)
+
+  const load = useCallback(() => {
+    fetchMembers().then(
+      (m) => {
+        setMembers(m)
+        setFailed(false)
+      },
+      () => setFailed(true),
+    )
+  }, [])
+  // Reload when the count of people waiting changes (checked every few minutes).
+  useEffect(load, [load, waiting])
+
+  const decide = async (m: Member, approve: boolean) => {
+    if (!approve) {
+      const ask = m.approved
+        ? `Remove ${m.username} as an organizer? Their account is deleted.`
+        : `Decline ${m.username}'s request to join?`
+      if (!confirm(ask)) return
+    }
+    setBusy(m.username)
+    try {
+      await decideMember(m.username, approve)
+      load()
+    } catch {
+      alert("Couldn't reach the club. Check the internet connection and try again.")
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  if (failed) return <p className="text-sm text-slate-500">Organizers show here when the iPad is online.</p>
+  if (!members) return null
+  const requests = members.filter((m) => !m.approved)
+  const organizers = members.filter((m) => m.approved)
+
+  return (
+    <div className="space-y-2">
+      {requests.length > 0 && (
+        <div className="rounded-xl bg-sky-50 p-2 ring-1 ring-sky-200">
+          <div className="px-1 text-xs font-bold tracking-wide text-sky-800 uppercase">
+            Asking to join ({requests.length})
+          </div>
+          <ul>
+            {requests.map((m) => (
+              <li key={m.username} className="flex items-center gap-2 px-1 py-1.5">
+                <span className="min-w-0 flex-1 truncate font-semibold">{m.username}</span>
+                <button className="d-btn d-btn-primary d-btn-xs" disabled={busy === m.username} onClick={() => decide(m, true)}>
+                  Approve
+                </button>
+                <button className="d-btn d-btn-ghost d-btn-xs" disabled={busy === m.username} onClick={() => decide(m, false)}>
+                  Decline
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      <div>
+        <div className="text-xs font-bold tracking-wide text-slate-500 uppercase">Organizers</div>
+        <ul>
+          {organizers.map((m) => (
+            <li key={m.username} className="flex items-center gap-2 py-1 text-sm">
+              <span className="min-w-0 flex-1 truncate">
+                {m.username}
+                {m.username === me && <span className="text-slate-400"> (you)</span>}
+              </span>
+              {m.username !== me && (
+                <button
+                  className="d-btn d-btn-ghost d-btn-xs text-rose-700"
+                  disabled={busy === m.username}
+                  onClick={() => decide(m, false)}
+                >
+                  Remove
+                </button>
+              )}
+            </li>
+          ))}
+        </ul>
+      </div>
     </div>
   )
 }
 
 /** Both the club and this iPad have data: the organizer picks which to keep. */
-function ChooseDataDialog({ snap, onDone }: { snap: ClubSnapshot; onDone: () => void }) {
+export function ChooseDataDialog({ snap, onDone }: { snap: ClubSnapshot; onDone: () => void }) {
   const players = useStore((s) => s.players)
   const history = useStore((s) => s.history)
   const theirs = fromDocs(snap.docs)
@@ -214,8 +255,8 @@ function ChooseDataDialog({ snap, onDone }: { snap: ClubSnapshot; onDone: () => 
             Which data should {snap.club.name} use?
           </h2>
           <p className="mt-1 text-sm text-slate-600">
-            The club and this iPad both have data. Pick one to keep; the other is replaced. Not sure? Cancel and export
-            a backup first (Backup, below).
+            The club and this iPad have different data. Pick one to keep; the other is replaced. Not sure? Download a
+            backup of this iPad&apos;s data first.
           </p>
         </div>
         <div className="grid grid-cols-2 gap-3">
@@ -242,7 +283,10 @@ function ChooseDataDialog({ snap, onDone }: { snap: ClubSnapshot; onDone: () => 
             <span className="mt-2 block text-sm font-semibold text-teal-700">Save it to the club</span>
           </button>
         </div>
-        <div className="d-modal-action mt-0">
+        <div className="d-modal-action mt-0 justify-between">
+          <button className="d-btn d-btn-ghost" onClick={() => exportBackup()}>
+            Download backup
+          </button>
           <button
             className="d-btn"
             onClick={() => {

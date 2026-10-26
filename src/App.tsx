@@ -1,6 +1,7 @@
-import { useState } from 'react'
+import { useState, useSyncExternalStore } from 'react'
 import { CloudBanner, CloudStatus } from './components/Cloud'
-import { useCloudSync } from './lib/cloud'
+import { CLOUD, hasData, signInAgain, useCloud, useCloudSync, useSyncStatus } from './lib/cloud'
+import { LoginPage } from './pages/LoginPage'
 import { costSummary, money } from './lib/cost'
 import { useRemoteCheckin, useRemoteStatus } from './lib/remoteCheckin'
 import { SessionTimer } from './components/SessionTimer'
@@ -26,11 +27,39 @@ const TABS = [
 
 type Tab = (typeof TABS)[number]['id']
 
+function useOnline() {
+  return useSyncExternalStore(
+    (onChange) => {
+      window.addEventListener('online', onChange)
+      window.addEventListener('offline', onChange)
+      return () => {
+        window.removeEventListener('online', onChange)
+        window.removeEventListener('offline', onChange)
+      }
+    },
+    () => navigator.onLine,
+  )
+}
+
+/**
+ * Organizers sign in before using the app. An offline iPad that already has
+ * data can skip it, so a session still runs at a court with no signal.
+ */
 export default function App() {
+  const signedIn = useCloud((s) => !!s.auth && !!s.club)
+  const hasLocal = useStore((s) => hasData(s))
+  const online = useOnline()
+  const [offline, setOffline] = useState(false)
+  if (!CLOUD || signedIn || offline) return <Main />
+  return <LoginPage onOffline={!online && hasLocal ? () => setOffline(true) : undefined} />
+}
+
+function Main() {
   const [tab, setTab] = useState<Tab>('session')
   const session = useStore((s) => s.session)
   const c = costSummary(session)
   const newcomers = useRemoteStatus((s) => s.newcomers.length)
+  const joinRequests = useSyncStatus((s) => s.waiting)
   useRemoteCheckin()
   useCloudSync()
 
@@ -56,7 +85,7 @@ export default function App() {
         </div>
       </header>
 
-      <CloudBanner onSignIn={() => setTab('settings')} />
+      <CloudBanner onSignIn={signInAgain} />
 
       <main className="min-h-0 flex-1 overflow-y-auto">
         {tab === 'session' && <SessionPage onGoToCheckIn={() => setTab('checkin')} />}
@@ -84,6 +113,14 @@ export default function App() {
             {t.id === 'checkin' && newcomers > 0 && (
               <span className="d-badge d-badge-sm d-badge-info absolute top-1 left-1/2 ml-2 font-bold" aria-label={`${newcomers} new names`}>
                 {newcomers}
+              </span>
+            )}
+            {t.id === 'settings' && joinRequests > 0 && (
+              <span
+                className="d-badge d-badge-sm d-badge-info absolute top-1 left-1/2 ml-2 font-bold"
+                aria-label={`${joinRequests} asking to join the club`}
+              >
+                {joinRequests}
               </span>
             )}
           </button>

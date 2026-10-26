@@ -1,20 +1,22 @@
 // Local API for development: phone check-in and club data with in-memory dbs,
 // and /dev-auth standing in for Cognito sign-in (same requests and answers).
 // Run with `pnpm checkin:dev`; the app uses it through .env.development.
-// Dev account: demo / demo1234, organizer of "Dev Club".
+// Dev account: demo / demo1234, organizer of "Dev Club" (join code DEVCLB).
+// Sign-up works too; approve a new club with POST /dev-approve-club { username }.
 import { randomUUID } from 'node:crypto'
 import { createServer } from 'node:http'
 import { devTokens } from './auth.mjs'
 import { createApi, memoryDb } from './checkin.mjs'
-import { createClubApi, memoryClubDb } from './club.mjs'
+import { createClubApi, memoryAccounts, memoryClubDb } from './club.mjs'
 
 const PORT = Number(process.env.PORT ?? 5181)
-const USERS = { demo: { password: 'demo1234', club: 'dev-club' } }
+const accounts = memoryAccounts({ demo: 'demo1234' })
 
 const tokens = devTokens()
 const refresh = new Map()
 const handle = createApi(memoryDb())
-const handleClub = createClubApi(memoryClubDb({ 'dev-club': 'Dev Club' }), tokens.verify)
+const clubs = memoryClubDb({ 'dev-club': { name: 'Dev Club', code: 'DEVCLB', organizers: ['demo'] } })
+const handleClub = createClubApi(clubs, accounts, tokens.verify)
 
 /** Cognito's InitiateAuth, for USER_PASSWORD_AUTH and REFRESH_TOKEN_AUTH. */
 function devAuth(body) {
@@ -22,19 +24,27 @@ function devAuth(body) {
   const username =
     body?.AuthFlow === 'REFRESH_TOKEN_AUTH'
       ? refresh.get(p.REFRESH_TOKEN)
-      : USERS[p.USERNAME]?.password === p.PASSWORD
-        ? p.USERNAME
+      : accounts.users[String(p.USERNAME).toLowerCase()] === p.PASSWORD
+        ? String(p.USERNAME).toLowerCase()
         : undefined
   if (!username) {
     return { status: 400, body: { __type: 'NotAuthorizedException', message: 'Incorrect username or password.' } }
   }
-  const IdToken = tokens.issue({ 'cognito:username': username, 'custom:club': USERS[username].club })
+  const IdToken = tokens.issue({ 'cognito:username': username })
   const result = { IdToken, ExpiresIn: 3600, TokenType: 'Bearer' }
   if (body.AuthFlow === 'USER_PASSWORD_AUTH') {
     result.RefreshToken = randomUUID()
     refresh.set(result.RefreshToken, username)
   }
   return { status: 200, body: { AuthenticationResult: result } }
+}
+
+/** Stands in for the app admin approving a new club: POST { username } of whoever asked. */
+async function approveClub(body) {
+  const m = await clubs.membership(String(body?.username ?? '').toLowerCase())
+  if (!m) return { status: 404, body: { error: 'no such request' } }
+  await clubs.approveClub(m.clubId)
+  return { status: 200, body: { ok: true } }
 }
 
 createServer(async (req, res) => {
@@ -54,7 +64,9 @@ createServer(async (req, res) => {
   const out =
     path === '/dev-auth'
       ? devAuth(body)
-      : path.startsWith('/club')
+      : path === '/dev-approve-club'
+        ? await approveClub(body)
+        : path.startsWith('/club') || path === '/signup'
         ? await handleClub({ method: req.method, path, token: req.headers.authorization?.replace(/^Bearer /, ''), body })
         : await handle({ method: req.method, path, key: req.headers['x-key'], pin: req.headers['x-pin'], body })
   res.writeHead(out.status, { 'content-type': 'application/json' }).end(JSON.stringify(out.body))

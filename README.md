@@ -16,7 +16,8 @@ iPad web app (PWA) for running badminton sessions: master player list, check-in,
 - **Game numbers** — each game gets a number in start order, shown on the court and in the Games tab.
 - **Rest** — take a player out of the queue without removing them from the session (they still pay).
 - **Costs** — (court fee + shuttles used × shuttle price) ÷ players present, rounded up to the next whole peso (no centavos). Shuttles are reused, so a game starts at 0 — tap + on the court when a new shuttle is opened. Adjust the total on Costs if needed. Tap a player to mark them paid.
-- **Club account** — in Settings, an organizer signs in (username and password) and the iPad saves its players, current session and past sessions to their club in the cloud. The iPad keeps working from its own copy, so a session never waits on the internet: changes go up a few seconds later, or once it's back online. The header shows the club and whether everything is saved. Signing in on a new device brings the club's data down; if both the club and the iPad already have different data, you pick which to keep. If another device saved in the meantime, nothing is overwritten: a banner asks whether to use the club's data or keep this iPad's.
+- **Sign in and clubs** — organizers sign in (username and password) before using the app. New organizers tap **Create an account** to either create a club (approved by the app admin) or join one with its join code (approved by any of that club's organizers, in Settings, where a badge shows who's waiting). Until approved, signing in shows "Waiting for approval". An offline iPad that already has data can **Continue offline**, so a session still runs at a court with no signal.
+- **Club account** — once signed in, the iPad saves its players, current session and past sessions to the club in the cloud. The iPad keeps working from its own copy, so a session never waits on the internet: changes go up a few seconds later, or once it's back online. The header shows the club and whether everything is saved. Signing in on a new device brings the club's data down; if both the club and the iPad already have different data, you pick which to keep. If another device saved in the meantime, nothing is overwritten: a banner asks whether to use the club's data or keep this iPad's.
 - **Settings** — club account, export/import a JSON backup, discard the current session, view past sessions.
 
 Data is stored in the browser on the device (localStorage), and also in the club's cloud data when an organizer is signed in. Export a backup regularly.
@@ -42,7 +43,7 @@ Phone check-in and club accounts go through a small API in `server/`, deployed a
 - one Lambda function with a public URL (`lambda.mjs`; check-in in `checkin.mjs`, club data in `club.mjs`, sign-in checks in `auth.mjs`)
 - a DynamoDB table for open check-ins (each removed a day later)
 - a DynamoDB table for club data (one item per document: players, current session, each past session), with 35-day point-in-time recovery
-- a Cognito user pool for organizer accounts: username and password only, no sign-up page and no email; accounts are made with `server/club.sh`
+- a Cognito user pool for organizer accounts: username and password only, no email; made by the app's sign-up (or `server/club.sh`), with which club each organizer belongs to in the club table
 
 At a session a week it stays within the AWS free tier, apart from a few cents a month of DynamoDB writes.
 
@@ -52,14 +53,14 @@ At a session a week it stays within the AWS free tier, apart from a few cents a 
 
 Clubs and organizers (`AWS_PROFILE=personal pnpm club <command>`):
 
-- `create-club "Serve N' Shout"` prints the new club's id
-- `add-organizer <club-id> <username>` asks for the password (typed twice, not shown)
+- `requests` lists new clubs waiting for approval; `approve-club <club-id>` lets one in, `decline-club <club-id>` deletes it and its organizer's account. Approving also works by setting the club's `approved` to `true` in the DynamoDB console (club table, item `pk` = `club#<id>`, `sk` = `meta`).
+- `clubs` lists clubs with their join codes; `organizers` lists who organizes which club
 - `set-password <username>` for a forgotten password (there's no email reset)
-- `remove-organizer <username>`, `clubs`, `organizers`
+- `create-club "Name"` and `add-organizer <club-id> <username>` make an approved club or organizer directly (the password is asked for, not shown); `remove-organizer <username>`
 
 To remove the stack: `aws cloudformation delete-stack --stack-name mbq-checkin --profile personal --region ap-southeast-1`. The club table and the user pool are kept (so club data and accounts survive); delete them in the AWS console if you really want them gone.
 
-Without these settings the Phone check-in button and Club account card are hidden. For local testing, `pnpm checkin:dev` runs the same API in memory on port 5181, with a stand-in for Cognito and a dev account `demo` / `demo1234` (used by `pnpm dev` through `.env.development`). If the app moves off timgarciaa.github.io, update `AllowOrigin` in `server/template.yaml` and deploy again.
+Without these settings the Phone check-in button and Club account card are hidden. For local testing, `pnpm checkin:dev` runs the same API in memory on port 5181, with a stand-in for Cognito and a dev account `demo` / `demo1234`, organizer of Dev Club (join code `DEVCLB`), used by `pnpm dev` through `.env.development`. Approve a test club there with `curl -X POST localhost:5181/dev-approve-club -d '{"username":"..."}'`. If the app moves off timgarciaa.github.io, update `AllowOrigin` in `server/template.yaml` and deploy again.
 
 ### On an iPad
 

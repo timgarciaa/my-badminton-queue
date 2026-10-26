@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react'
+import { exportBackup, LAST_BACKUP_KEY } from '../lib/backup'
 import { costSummary, money } from '../lib/cost'
 import { longDate } from '../lib/stats'
 import { ClubAccountCard } from '../components/Cloud'
@@ -7,8 +8,6 @@ import { useCloud } from '../lib/cloud'
 import { usePlayerMap, useStore } from '../store/useStore'
 import type { Session } from '../types'
 
-/** When this iPad last exported a backup (per device, so browser storage is enough). */
-const LAST_BACKUP_KEY = 'mbq-last-backup'
 const readLastBackup = () => {
   try {
     return Number(localStorage.getItem(LAST_BACKUP_KEY)) || null
@@ -35,24 +34,7 @@ export function SettingsPage() {
   const [lastBackup, setLastBackup] = useState(readLastBackup)
   const club = useCloud((s) => s.club)
 
-  const exportData = () => {
-    const { players, session, history } = useStore.getState()
-    const blob = new Blob([JSON.stringify({ app: 'mbq', version: 1, players, session, history }, null, 2)], {
-      type: 'application/json',
-    })
-    const a = document.createElement('a')
-    a.href = URL.createObjectURL(blob)
-    a.download = `mbq-backup-${new Date().toLocaleDateString('en-CA')}.json`
-    a.click()
-    URL.revokeObjectURL(a.href)
-    const now = Date.now()
-    try {
-      localStorage.setItem(LAST_BACKUP_KEY, String(now))
-    } catch {
-      // Private mode: just don't remember it.
-    }
-    setLastBackup(now)
-  }
+  const exportData = () => setLastBackup(exportBackup())
 
   const onImport = async (file: File) => {
     try {
