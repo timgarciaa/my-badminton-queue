@@ -64,8 +64,13 @@ function Main() {
   useCloudSync()
 
   return (
-    <div className="flex h-full flex-col pt-[env(safe-area-inset-top)]">
-      <header className="flex items-center gap-6 border-b border-slate-200 bg-white px-6 py-3">
+    <div className="flex h-full flex-col">
+      {/*
+        The white header reaches up under the status bar. In the installed app,
+        iPadOS blurs a band below the status bar too (its glass edge), so the
+        header's content starts below that.
+      */}
+      <header className="flex items-center gap-6 border-b border-slate-200 bg-white px-6 pt-[calc(env(safe-area-inset-top)+0.75rem)] pb-3 standalone:pt-[calc(env(safe-area-inset-top)+3rem)]">
         <h1 className="leading-tight whitespace-nowrap text-teal-700">
           <span className="block text-2xl font-black tracking-tight">My Badminton Queue</span>
           <CloudStatus onOpen={() => setTab('settings')} />

@@ -6,6 +6,9 @@
   themes: false;
   logs: false;
 }
+/* Opened from the home screen (the installed app on the iPad). */
+@custom-variant standalone (@media (display-mode: standalone));
+
 @plugin 'daisyui/theme' {
   name: 'mbq';
   default: true;
