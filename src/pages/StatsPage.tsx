@@ -20,6 +20,7 @@ import {
   worstRecord,
   type PlayerRecord,
 } from '../lib/stats'
+import { PlayerStats } from '../components/PlayerStats'
 import { PlaceCell, ShareIcon, Standings } from '../components/Standings'
 import { EmptyState } from '../components/ui'
 import { AWARD_SIZE, awardImage, checkinImage, drawAward, shareImage, type AwardArt, type AwardTone } from '../lib/shareImage'
@@ -37,14 +38,16 @@ const record = (r: PlayerRecord) => `${r.wins}–${r.losses}`
 
 /**
  * Analytics over past sessions: pick all time, the last 3 months or one
- * session to see its summary, awards (best and worst duos, streaks,
- * rivalries) and tables.
+ * session. Overview shows its summary, awards (best and worst duos, streaks,
+ * rivalries) and tables; Players shows one player's own stats.
  */
 export function StatsPage() {
   const session = useStore((s) => s.session)
   const history = useStore((s) => s.history)
   const players = usePlayerMap()
   const [scope, setScope] = useState<Scope>('all')
+  const [view, setView] = useState<'overview' | 'players'>('overview')
+  const [chosen, setChosen] = useState<string | null>(null)
 
   const all = [session, ...history]
   const recent = sessionsWithin(all, 3)
@@ -62,11 +65,24 @@ export function StatsPage() {
   const names = (p: Pair) => p.map(name).sort((a, b) => a.localeCompare(b)).join(' & ')
 
   return (
-    <div className="h-full space-y-5 overflow-y-auto p-5">
-      <div className="flex flex-wrap items-center gap-3">
+    <div className="flex h-full flex-col">
+      <div className="flex flex-wrap items-center gap-3 px-5 pt-5 pb-4">
         <h2 className="text-xl font-bold">Stats</h2>
+        <div role="tablist" className="d-tabs d-tabs-box">
+          {(['overview', 'players'] as const).map((v) => (
+            <button
+              key={v}
+              role="tab"
+              aria-selected={view === v}
+              className={`d-tab h-10 px-5 font-semibold ${view === v ? 'd-tab-active' : ''}`}
+              onClick={() => setView(v)}
+            >
+              {v === 'overview' ? 'Overview' : 'Players'}
+            </button>
+          ))}
+        </div>
         <select
-          className="d-select w-72 font-semibold"
+          className="d-select ml-auto w-72 font-semibold"
           aria-label="Sessions to show"
           value={scope}
           onChange={(e) => setScope(e.target.value)}
@@ -85,20 +101,36 @@ export function StatsPage() {
         </select>
       </div>
 
-      <Overview sessions={sessions} />
-
       {games.length === 0 ? (
-        <EmptyState>
-          {scope === '3m'
-            ? 'No finished games in the last 3 months.'
-            : scope === session.id || history.length === 0
-              ? 'Stats show up once games are finished. End a session on the Costs tab to keep it in history.'
-              : 'No finished games in this session.'}
-        </EmptyState>
+        <div className="space-y-5 px-5 pb-5">
+          {view === 'overview' && <Overview sessions={sessions} />}
+          <EmptyState>
+            {scope === '3m'
+              ? 'No finished games in the last 3 months.'
+              : scope === session.id || history.length === 0
+                ? 'Stats show up once games are finished. End a session on the Costs tab to keep it in history.'
+                : 'No finished games in this session.'}
+          </EmptyState>
+        </div>
+      ) : view === 'players' ? (
+        <PlayerStats sessions={sessions} scope={label} showDate={span} chosen={chosen} onChoose={setChosen} />
       ) : (
-        <ScopeLabel.Provider value={label}>
-          <Dashboard games={games} sessions={sessions} showDate={span} name={name} names={names} />
-        </ScopeLabel.Provider>
+        <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-5 pb-5">
+          <Overview sessions={sessions} />
+          <ScopeLabel.Provider value={label}>
+            <Dashboard
+              games={games}
+              sessions={sessions}
+              showDate={span}
+              name={name}
+              names={names}
+              onChoose={(id) => {
+                setChosen(id)
+                setView('players')
+              }}
+            />
+          </ScopeLabel.Provider>
+        </div>
       )}
     </div>
   )
@@ -142,6 +174,7 @@ function Dashboard({
   showDate,
   name,
   names,
+  onChoose,
 }: {
   games: ReturnType<typeof playedGames>
   sessions: Session[]
@@ -149,6 +182,8 @@ function Dashboard({
   showDate: boolean
   name: (id: string) => string
   names: (p: Pair) => string
+  /** Open a player's own stats. */
+  onChoose: (id: string) => void
 }) {
   const duos = duoRecords(games)
   const runs = streaks(games)
@@ -276,6 +311,8 @@ function Dashboard({
                 : `${scope} · ${games.length} ${games.length === 1 ? 'game' : 'games'}`
             }
             filename={`standings-${scope.toLowerCase().replace(/[^a-z0-9]+/g, '-')}.png`}
+            onFocus={(id) => id && onChoose(id)}
+            hint="Tap a player to see their stats"
           />
           <CheckinStandings sessions={sessions} name={name} />
         </div>

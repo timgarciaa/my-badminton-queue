@@ -5,7 +5,7 @@ import { costSummary, courtBooking, money, sessionStarted, shuttleCount, shuttle
 import type { Help } from './balance'
 import { parseNames } from './importNames'
 import { matchSkill, planGames, winnersStayGame } from './plan'
-import { arrivals, bestRecord, checkinPlaces, checkinStandings, duoRecords, mostOften, gameExtremes, gameTime, helpFrom, ordinal, places, playedGames, sessionsWithin, standings, playerRecords, rivalries, streaks, winRate, worstRecord } from './stats'
+import { arrivals, bestRecord, checkinPlaces, checkinStandings, duoRecords, form, mateRecords, mostOften, gameExtremes, gameTime, helpFrom, ordinal, places, playedGames, sessionsWithin, standings, playerRecords, rivalries, streaks, winRate, worstRecord } from './stats'
 import { dequeue, enqueue, move, nextFour, placeByArrival, pushFront, swap } from './queue'
 import { isHelpStruggling, isSkillMatch, newSession, useStore } from '../store/useStore'
 
@@ -753,6 +753,27 @@ describe('stats dashboard', () => {
     expect([1, 2, 3, 4, 11, 12, 13, 21, 22, 101, 111].map(ordinal)).toEqual([
       '1st', '2nd', '3rd', '4th', '11th', '12th', '13th', '21st', '22nd', '101st', '111th',
     ])
+  })
+
+  it("records one player's partners and opponents", () => {
+    // a: with b 3-0, with c 0-1; faced d 3 times (2-1), c twice (2-0).
+    const partners = mateRecords(games, 'a', 'partner')
+    expect(partners).toEqual([
+      { id: 'b', played: 3, wins: 3, losses: 0 },
+      { id: 'c', played: 1, wins: 0, losses: 1 },
+    ])
+    const opponents = mateRecords(games, 'a', 'opponent')
+    expect(opponents[0]).toEqual({ id: 'd', played: 3, wins: 2, losses: 1 })
+    expect(opponents.find((r) => r.id === 'c')).toEqual({ id: 'c', played: 2, wins: 2, losses: 0 })
+    // A game with no result counts as played only.
+    expect(mateRecords(games, 'e', 'partner')).toEqual([{ id: 'f', played: 3, wins: 1, losses: 1 }])
+    expect(mateRecords(games, 'z', 'partner')).toEqual([])
+  })
+
+  it("lists a player's recent results in play order, skipping games with no result", () => {
+    expect(form([...games].reverse(), 'a')).toEqual(['W', 'W', 'W', 'L'])
+    expect(form(games, 'e')).toEqual(['L', 'W'])
+    expect(form(games, 'a', 2)).toEqual(['W', 'L'])
   })
 
   it('keeps sessions from the last 3 months', () => {

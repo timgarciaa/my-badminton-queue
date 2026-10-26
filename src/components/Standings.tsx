@@ -51,6 +51,7 @@ export function Standings({
   filename,
   focus,
   onFocus,
+  hint = 'Tap a player to see their games',
   className = '',
 }: {
   games: Game[]
@@ -60,6 +61,8 @@ export function Standings({
   filename: string
   focus?: string | null
   onFocus?: (id: string | null) => void
+  /** Under the title when players can be tapped. */
+  hint?: string
   className?: string
 }) {
   const players = usePlayerMap()
@@ -78,7 +81,7 @@ export function Standings({
       <div className="flex items-center justify-between gap-2 border-b border-slate-100 px-4 py-3">
         <div>
           <h2 className="text-lg font-bold">Standings</h2>
-          {onFocus && <p className="text-xs text-slate-500">Tap a player to see their games</p>}
+          {onFocus && <p className="text-xs text-slate-500">{hint}</p>}
         </div>
         <button className="d-btn d-btn-primary d-btn-soft h-11" disabled={ranked.length === 0} onClick={share}>
           <ShareIcon />

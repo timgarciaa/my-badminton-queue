@@ -315,3 +315,39 @@ export function checkinStandings(sessions: Session[]): CheckinRow[] {
 
 /** Check-in places: players arriving within the same minute (on average) share a place. */
 export const checkinPlaces = (rows: CheckinRow[]) => placesBy(rows, (r) => String(Math.round(r.after)))
+
+/** Someone a player partnered or faced, and the player's record with or against them. */
+export interface MateRecord extends PlayerRecord {
+  id: string
+}
+
+/**
+ * One player's record with each partner, or against each opponent, most games
+ * first. Games with no result count as played only.
+ */
+export function mateRecords(games: Game[], id: string, as: 'partner' | 'opponent'): MateRecord[] {
+  const out = new Map<string, MateRecord>()
+  for (const g of games) {
+    if (!g.endedAt) continue
+    const side = g.teamA.includes(id) ? 'A' : g.teamB.includes(id) ? 'B' : null
+    if (!side) continue
+    const [mine, theirs] = side === 'A' ? [g.teamA, g.teamB] : [g.teamB, g.teamA]
+    for (const other of as === 'partner' ? mine.filter((p) => p !== id) : theirs) {
+      let r = out.get(other)
+      if (!r) out.set(other, (r = { id: other, ...emptyRecord() }))
+      r.played++
+      if (g.winner === side) r.wins++
+      else if (g.winner) r.losses++
+    }
+  }
+  return [...out.values()].sort((a, b) => b.played - a.played || b.wins - a.wins)
+}
+
+/** A player's last `n` decided results in play order, oldest first. */
+export function form(games: Game[], id: string, n = 10): ('W' | 'L')[] {
+  return [...games]
+    .filter((g) => g.endedAt && g.winner && (g.teamA.includes(id) || g.teamB.includes(id)))
+    .sort((a, b) => a.startedAt - b.startedAt)
+    .slice(-n)
+    .map((g) => ((g.winner === 'A') === g.teamA.includes(id) ? 'W' : 'L'))
+}
