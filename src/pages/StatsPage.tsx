@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, type ReactNode } from 'react'
+import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react'
 import { shuttlesUsed } from '../lib/cost'
 import {
   arrivals,
@@ -22,7 +22,7 @@ import {
 } from '../lib/stats'
 import { PlaceCell, ShareIcon, Standings } from '../components/Standings'
 import { EmptyState } from '../components/ui'
-import { awardImage, checkinImage, shareImage, type AwardTone } from '../lib/shareImage'
+import { AWARD_SIZE, awardImage, checkinImage, drawAward, shareImage, type AwardArt, type AwardTone } from '../lib/shareImage'
 import { usePlayerMap, useStore } from '../store/useStore'
 import type { Pair, Session } from '../types'
 
@@ -184,15 +184,15 @@ function Dashboard({
 
   return (
     <>
-      <div className="grid grid-cols-4 gap-4">
-        <Award title="Unbeatable duo" tone="emerald" who={bestDuo && names(bestDuo.pair)} value={bestDuo && record(bestDuo)}>
+      <div className="grid grid-cols-3 gap-5 xl:grid-cols-4">
+        <Award title="Unbeatable duo" art="trophy" tone="emerald" who={bestDuo && names(bestDuo.pair)} value={bestDuo && record(bestDuo)}>
           {bestDuo && `${pct(bestDuo)} · ${bestDuo.played} ${bestDuo.played === 1 ? 'game' : 'games'} together`}
         </Award>
-        <Award title="Worst duo" tone="rose" who={worstDuo && names(worstDuo.pair)} value={worstDuo && record(worstDuo)}>
+        <Award title="Worst duo" art="net" tone="rose" who={worstDuo && names(worstDuo.pair)} value={worstDuo && record(worstDuo)}>
           {worstDuo && `${pct(worstDuo)} · ${worstDuo.played} ${worstDuo.played === 1 ? 'game' : 'games'} together`}
         </Award>
         <Award
-          title="Longest win streak"
+          title="Longest win streak" art="flame"
           tone="amber"
           who={winRun.top ? who(winRun.ids) : undefined}
           value={winRun.top ? `${winRun.top} ${winRun.top === 1 ? 'win' : 'wins'}` : undefined}
@@ -200,7 +200,7 @@ function Dashboard({
           in a row
         </Award>
         <Award
-          title="Longest losing run"
+          title="Longest losing run" art="rain"
           tone="slate"
           who={lossRun.top ? who(lossRun.ids) : undefined}
           value={lossRun.top ? `${lossRun.top} ${lossRun.top === 1 ? 'loss' : 'losses'}` : undefined}
@@ -208,7 +208,7 @@ function Dashboard({
           in a row
         </Award>
         <Award
-          title="On a roll"
+          title="On a roll" art="rocket"
           tone="orange"
           who={hot.top >= 2 ? who(hot.ids) : undefined}
           value={hot.top >= 2 ? `${hot.top} wins` : undefined}
@@ -216,14 +216,14 @@ function Dashboard({
         >
           and counting
         </Award>
-        <Award title="Best win rate" tone="violet" who={bestPlayer && name(bestPlayer.id)} value={bestPlayer && pct(bestPlayer)}>
+        <Award title="Best win rate" art="target" tone="violet" who={bestPlayer && name(bestPlayer.id)} value={bestPlayer && pct(bestPlayer)}>
           {bestPlayer && `${record(bestPlayer)} in ${bestPlayer.wins + bestPlayer.losses} decided games`}
         </Award>
-        <Award title="Most games" tone="sky" who={who(iron)} value={`${mostPlayed} games`}>
+        <Award title="Most games" art="tube" tone="sky" who={who(iron)} value={`${mostPlayed} games`}>
           {iron.length > 1 ? `${iron.length} players tied` : 'played'}
         </Award>
         <Award
-          title="Biggest rivalry"
+          title="Biggest rivalry" art="clash"
           tone="teal"
           who={rival && `${name(rival.pair[0])} vs ${name(rival.pair[1])}`}
           value={rival && `${rival.wins[0]}–${rival.wins[1]}`}
@@ -231,11 +231,11 @@ function Dashboard({
         >
           {rival && `Met ${rival.met} times`}
         </Award>
-        <Award title="Longest game" tone="indigo" who={longest && which(longest)} value={longest && gameTime(longest)}>
+        <Award title="Longest game" art="hourglass" tone="indigo" who={longest && which(longest)} value={longest && gameTime(longest)}>
           {longest && teams(longest)}
         </Award>
         <Award
-          title="Shortest game"
+          title="Shortest game" art="stopwatch"
           tone="lime"
           who={shortest && which(shortest)}
           value={shortest && gameTime(shortest)}
@@ -244,7 +244,7 @@ function Dashboard({
           {shortest && teams(shortest)}
         </Award>
         <Award
-          title="Early bird"
+          title="Early bird" art="sunrise"
           tone="cyan"
           who={arrived.length ? who(early.ids) : undefined}
           value={arrived.length === 1 ? clock(arrived[0].firstAt) : arrived.length ? `${early.times}×` : undefined}
@@ -253,7 +253,7 @@ function Dashboard({
           {arrived.length === 1 ? 'first to check in' : often(early.times, 'first to arrive')}
         </Award>
         <Award
-          title="Last to arrive"
+          title="Last to arrive" art="moon"
           tone="fuchsia"
           who={arrived.length ? who(late.ids) : undefined}
           value={arrived.length === 1 ? clock(arrived[0].lastAt) : arrived.length ? `${late.times}×` : undefined}
@@ -291,24 +291,17 @@ function Dashboard({
 /** The games the dashboard covers, e.g. "Last 3 months"; printed on shared award cards. */
 const ScopeLabel = createContext('')
 
-const TONES: Record<AwardTone, string> = {
-  emerald: 'border-t-emerald-500 text-emerald-700',
-  rose: 'border-t-rose-500 text-rose-700',
-  amber: 'border-t-amber-400 text-amber-700',
-  slate: 'border-t-slate-400 text-slate-600',
-  orange: 'border-t-orange-400 text-orange-700',
-  violet: 'border-t-violet-500 text-violet-700',
-  sky: 'border-t-sky-500 text-sky-700',
-  teal: 'border-t-teal-600 text-teal-700',
-  indigo: 'border-t-indigo-500 text-indigo-700',
-  lime: 'border-t-lime-500 text-lime-700',
-  cyan: 'border-t-cyan-500 text-cyan-700',
-  fuchsia: 'border-t-fuchsia-500 text-fuchsia-700',
-}
+/** Cards are drawn at 2/3 of the shared image's size: sharp at the size they show on the iPad. */
+const CARD_SCALE = 2 / 3
 
+/**
+ * An award as the card that gets shared, drawn live: its own picture, who won
+ * it and the number. Share sends the same card at full size.
+ */
 function Award({
   title,
   tone,
+  art,
   who,
   value,
   empty = 'Not enough results yet',
@@ -316,6 +309,7 @@ function Award({
 }: {
   title: string
   tone: AwardTone
+  art: AwardArt
   who?: string
   value?: string
   empty?: string
@@ -323,32 +317,42 @@ function Award({
   children?: string | false
 }) {
   const scope = useContext(ScopeLabel)
+  const ref = useRef<HTMLCanvasElement>(null)
+  const won = !!(who && value)
+  const detail = children || ''
+
+  useEffect(() => {
+    const ctx = ref.current?.getContext('2d')
+    if (!ctx) return
+    ctx.setTransform(CARD_SCALE, 0, 0, CARD_SCALE, 0, 0)
+    drawAward(ctx, { title, who, value, detail, scope, tone, art, empty })
+  }, [title, who, value, detail, scope, tone, art, empty])
+
   const share = () => {
-    const image = awardImage({ title, who: who!, value: value!, detail: children || '', scope, tone })
+    const image = awardImage({ title, who, value, detail, scope, tone, art })
     const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-')
     void shareImage(image, `${slug(title)}-${slug(scope)}.png`, title)
   }
+
   return (
-    <div className={`d-card relative border-t-4 bg-base-100 p-4 shadow-sm ring-1 ring-slate-200 ${TONES[tone]}`}>
-      <p className="text-xs font-bold tracking-wide uppercase">{title}</p>
-      {who && value ? (
-        <>
-          <p className="mt-1 truncate text-lg leading-tight font-bold text-slate-900" title={who}>
-            {who}
-          </p>
-          <p className="text-3xl font-black tabular-nums">{value}</p>
-          <p className="pr-9 text-xs text-slate-500">{children}</p>
-          <button
-            className="d-btn d-btn-circle d-btn-ghost d-btn-sm absolute right-1.5 bottom-1.5 h-10 w-10"
-            aria-label={`Share ${title}`}
-            title={`Share ${title}`}
-            onClick={share}
-          >
-            <ShareIcon className="h-4.5 w-4.5" />
-          </button>
-        </>
-      ) : (
-        <p className="mt-2 text-sm text-slate-400">{empty}</p>
+    <div className="relative overflow-hidden rounded-3xl shadow-lg ring-1 ring-black/5">
+      <canvas
+        ref={ref}
+        width={AWARD_SIZE.width * CARD_SCALE}
+        height={AWARD_SIZE.height * CARD_SCALE}
+        className="block aspect-[4/5] h-auto w-full"
+        role="img"
+        aria-label={won ? `${title}: ${who}, ${value}, ${detail}` : `${title}: ${empty}`}
+      />
+      {won && (
+        <button
+          className="d-btn d-btn-circle absolute top-3 right-3 h-12 w-12 border-0 bg-white/90 text-slate-800 shadow-md"
+          aria-label={`Share ${title}`}
+          title={`Share ${title}`}
+          onClick={share}
+        >
+          <ShareIcon className="h-5 w-5" />
+        </button>
       )}
     </div>
   )

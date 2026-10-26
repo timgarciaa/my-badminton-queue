@@ -483,31 +483,585 @@ export const AWARD_TONES = {
 
 export type AwardTone = keyof typeof AWARD_TONES
 
-/**
- * One award (e.g. Unbeatable duo) as a 4:5 card for sharing: the award's
- * colours, court lines, confetti and a flying shuttlecock, then who won it,
- * the big number and what it means.
- */
-export function awardImage({
-  title,
-  who,
-  value,
-  detail,
-  scope,
-  tone,
-}: {
+/** A five-or-more-pointed star centred at (x, y). */
+function star(ctx: Ctx, x: number, y: number, r: number, color: string, points = 5, inner = 0.45) {
+  ctx.beginPath()
+  for (let i = 0; i < points * 2; i++) {
+    const a = (i / (points * 2)) * Math.PI * 2 - Math.PI / 2
+    const rr = i % 2 ? r * inner : r
+    ctx.lineTo(x + Math.cos(a) * rr, y + Math.sin(a) * rr)
+  }
+  ctx.closePath()
+  ctx.fillStyle = color
+  ctx.fill()
+}
+
+/** A badminton racket with the end of its handle at (x, y), pointing up, turned by `angle`. About 1.06 × size long. */
+function racket(ctx: Ctx, x: number, y: number, size: number, angle: number, frame: string, grip: string) {
+  const s = size
+  ctx.save()
+  ctx.translate(x, y)
+  ctx.rotate(angle)
+  ctx.lineCap = 'round'
+  ctx.lineJoin = 'round'
+  ctx.fillStyle = grip
+  ctx.beginPath()
+  ctx.roundRect(-0.045 * s, -0.3 * s, 0.09 * s, 0.3 * s, 0.03 * s)
+  ctx.fill()
+  ctx.strokeStyle = frame
+  ctx.lineWidth = 0.03 * s
+  ctx.beginPath()
+  ctx.moveTo(0, -0.3 * s)
+  ctx.lineTo(0, -0.5 * s)
+  ctx.moveTo(0, -0.47 * s)
+  ctx.lineTo(-0.1 * s, -0.58 * s)
+  ctx.moveTo(0, -0.47 * s)
+  ctx.lineTo(0.1 * s, -0.58 * s)
+  ctx.stroke()
+  const cy = -0.8 * s
+  const rx = 0.2 * s
+  const ry = 0.26 * s
+  ctx.save()
+  ctx.beginPath()
+  ctx.ellipse(0, cy, rx, ry, 0, 0, Math.PI * 2)
+  ctx.clip()
+  ctx.fillStyle = 'rgba(255,255,255,0.12)'
+  ctx.fill()
+  ctx.strokeStyle = 'rgba(255,255,255,0.7)'
+  ctx.lineWidth = 0.006 * s
+  for (let i = -7; i <= 7; i++) {
+    ctx.beginPath()
+    ctx.moveTo((i / 7.5) * rx, cy - ry)
+    ctx.lineTo((i / 7.5) * rx, cy + ry)
+    ctx.moveTo(-rx, cy + (i / 7.5) * ry)
+    ctx.lineTo(rx, cy + (i / 7.5) * ry)
+    ctx.stroke()
+  }
+  ctx.restore()
+  ctx.strokeStyle = frame
+  ctx.lineWidth = 0.04 * s
+  ctx.beginPath()
+  ctx.ellipse(0, cy, rx, ry, 0, 0, Math.PI * 2)
+  ctx.stroke()
+  ctx.restore()
+}
+
+/** A flame whose base is centred at (x, y), `h` tall: red outside, yellow at the heart. */
+function flame(ctx: Ctx, x: number, y: number, w: number, h: number) {
+  const layer = (scale: number, color: string, lift: number) => {
+    const ww = w * scale
+    const hh = h * scale
+    const by = y - lift
+    ctx.beginPath()
+    ctx.moveTo(x, by - hh)
+    ctx.bezierCurveTo(x + ww * 0.15, by - hh * 0.6, x + ww * 0.62, by - hh * 0.55, x + ww * 0.5, by - hh * 0.2)
+    ctx.bezierCurveTo(x + ww * 0.42, by, x + ww * 0.2, by + hh * 0.04, x, by + hh * 0.04)
+    ctx.bezierCurveTo(x - ww * 0.2, by + hh * 0.04, x - ww * 0.42, by, x - ww * 0.5, by - hh * 0.2)
+    ctx.bezierCurveTo(x - ww * 0.6, by - hh * 0.5, x - ww * 0.3, by - hh * 0.55, x - ww * 0.25, by - hh * 0.75)
+    ctx.bezierCurveTo(x - ww * 0.1, by - hh * 0.6, x - ww * 0.05, by - hh * 0.7, x, by - hh)
+    ctx.fillStyle = color
+    ctx.fill()
+  }
+  layer(1, '#ef4444', 0)
+  layer(0.78, '#f97316', h * 0.02)
+  layer(0.55, '#fbbf24', h * 0.03)
+  layer(0.32, '#fef9c3', h * 0.03)
+}
+
+/** A fluffy cloud centred at (x, y), about 2.2 × r wide. */
+function cloud(ctx: Ctx, x: number, y: number, r: number, color: string) {
+  ctx.fillStyle = color
+  ctx.beginPath()
+  for (const [dx, dy, rr] of [
+    [-0.75, 0.15, 0.55],
+    [-0.25, -0.25, 0.75],
+    [0.4, -0.1, 0.65],
+    [0.9, 0.2, 0.45],
+    [0.1, 0.25, 0.6],
+  ]) {
+    ctx.moveTo(x + dx * r + rr * r, y + dy * r)
+    ctx.arc(x + dx * r, y + dy * r, rr * r, 0, Math.PI * 2)
+  }
+  ctx.fill()
+}
+
+/** Short lines bursting out from (x, y), for impacts and sparkles. */
+function burst(ctx: Ctx, x: number, y: number, r0: number, r1: number, count: number, color: string, width: number, turn = 0) {
+  ctx.save()
+  ctx.strokeStyle = color
+  ctx.lineWidth = width
+  ctx.lineCap = 'round'
+  for (let i = 0; i < count; i++) {
+    const a = turn + (i / count) * Math.PI * 2
+    ctx.beginPath()
+    ctx.moveTo(x + Math.cos(a) * r0, y + Math.sin(a) * r0)
+    ctx.lineTo(x + Math.cos(a) * r1, y + Math.sin(a) * r1)
+    ctx.stroke()
+  }
+  ctx.restore()
+}
+
+/** The picture for each award, drawn around (cx, cy) within about ±230. */
+export type AwardArt =
+  | 'trophy'
+  | 'net'
+  | 'flame'
+  | 'rain'
+  | 'rocket'
+  | 'target'
+  | 'tube'
+  | 'clash'
+  | 'hourglass'
+  | 'stopwatch'
+  | 'sunrise'
+  | 'moon'
+
+type Tone = readonly [string, string, string]
+
+const ARTS: Record<AwardArt, (ctx: Ctx, cx: number, cy: number, tone: Tone) => void> = {
+  // Unbeatable duo: a golden trophy over two crossed rackets.
+  trophy(ctx, cx, cy, [deep]) {
+    racket(ctx, cx - 200, cy + 210, 380, 0.5, '#ffffff', deep)
+    racket(ctx, cx + 200, cy + 210, 380, -0.5, '#ffffff', deep)
+    const gold = ctx.createLinearGradient(cx - 130, 0, cx + 130, 0)
+    gold.addColorStop(0, '#f59e0b')
+    gold.addColorStop(0.45, '#fde68a')
+    gold.addColorStop(1, '#d97706')
+    ctx.strokeStyle = gold
+    ctx.lineWidth = 24
+    for (const side of [-1, 1]) {
+      ctx.beginPath()
+      ctx.arc(cx + side * 125, cy - 60, 50, side < 0 ? Math.PI * 0.5 : -Math.PI * 0.5, side < 0 ? Math.PI * 1.5 : Math.PI * 0.5)
+      ctx.stroke()
+    }
+    ctx.fillStyle = gold
+    ctx.beginPath()
+    ctx.moveTo(cx - 130, cy - 130)
+    ctx.lineTo(cx + 130, cy - 130)
+    ctx.quadraticCurveTo(cx + 125, cy + 45, cx, cy + 65)
+    ctx.quadraticCurveTo(cx - 125, cy + 45, cx - 130, cy - 130)
+    ctx.fill()
+    ctx.fillRect(cx - 20, cy + 55, 40, 55)
+    ctx.beginPath()
+    ctx.roundRect(cx - 85, cy + 105, 170, 34, 10)
+    ctx.fill()
+    ctx.fillStyle = '#92400e'
+    ctx.beginPath()
+    ctx.roundRect(cx - 110, cy + 136, 220, 40, 10)
+    ctx.fill()
+    ctx.fillStyle = 'rgba(255,255,255,0.45)'
+    ctx.beginPath()
+    ctx.ellipse(cx - 70, cy - 60, 14, 50, 0.15, 0, Math.PI * 2)
+    ctx.fill()
+    star(ctx, cx, cy - 45, 42, '#fffbeb')
+    star(ctx, cx - 210, cy - 190, 18, '#fde68a', 4, 0.35)
+    star(ctx, cx + 220, cy - 150, 24, '#ffffff', 4, 0.35)
+    star(ctx, cx + 170, cy - 230, 14, '#fde68a', 4, 0.35)
+  },
+
+  // Worst duo: a shuttle stuck in the net.
+  net(ctx, cx, cy, [deep, , light]) {
+    const top = cy - 70
+    const bottom = cy + 110
+    ctx.fillStyle = '#e2e8f0'
+    for (const x of [cx - 300, cx + 300]) {
+      ctx.beginPath()
+      ctx.roundRect(x - 9, top - 40, 18, 290, 6)
+      ctx.fill()
+    }
+    ctx.strokeStyle = 'rgba(255,255,255,0.55)'
+    ctx.lineWidth = 3
+    for (let x = cx - 290; x <= cx + 290; x += 24) {
+      ctx.beginPath()
+      ctx.moveTo(x, top)
+      ctx.quadraticCurveTo(x + (x - cx) * 0.02, (top + bottom) / 2 + 12, x, bottom)
+      ctx.stroke()
+    }
+    for (let y = top; y <= bottom; y += 24) {
+      ctx.beginPath()
+      ctx.moveTo(cx - 291, y)
+      ctx.quadraticCurveTo(cx, y + 22, cx + 291, y)
+      ctx.stroke()
+    }
+    ctx.fillStyle = '#ffffff'
+    ctx.beginPath()
+    ctx.roundRect(cx - 300, top - 14, 600, 18, 6)
+    ctx.fill()
+    // Bulge where the shuttle hit.
+    ctx.strokeStyle = 'rgba(255,255,255,0.8)'
+    ctx.lineWidth = 4
+    ctx.beginPath()
+    ctx.ellipse(cx + 40, cy + 20, 60, 44, 0, 0, Math.PI * 2)
+    ctx.stroke()
+    shuttle(ctx, cx + 40, cy + 25, 200, -0.9, deep)
+    burst(ctx, cx + 40, cy + 25, 70, 110, 7, light, 8, -2.4)
+    // A loose feather drifting down.
+    ctx.fillStyle = 'rgba(255,255,255,0.85)'
+    ctx.beginPath()
+    ctx.ellipse(cx - 120, cy + 190, 9, 28, 1.1, 0, Math.PI * 2)
+    ctx.fill()
+  },
+
+  // Longest win streak: a shuttle rising out of the flames.
+  flame(ctx, cx, cy) {
+    flame(ctx, cx, cy + 210, 330, 400)
+    shuttle(ctx, cx + 10, cy - 150, 170, Math.PI + 0.15, '#dc2626')
+    const rnd = random(7)
+    for (let i = 0; i < 14; i++) {
+      ctx.fillStyle = i % 2 ? '#fde68a' : '#fb923c'
+      ctx.beginPath()
+      ctx.arc(cx - 220 + rnd() * 440, cy - 200 + rnd() * 330, 4 + rnd() * 7, 0, Math.PI * 2)
+      ctx.fill()
+    }
+  },
+
+  // Longest losing run: rain on a fallen shuttle.
+  rain(ctx, cx, cy, [, bright]) {
+    ctx.fillStyle = 'rgba(15,23,42,0.18)'
+    ctx.beginPath()
+    ctx.ellipse(cx + 20, cy + 205, 200, 26, 0, 0, Math.PI * 2)
+    ctx.fill()
+    shuttle(ctx, cx - 70, cy + 175, 210, Math.PI / 2 + 0.25, bright)
+    ctx.fillStyle = '#bae6fd'
+    const rnd = random(3)
+    for (let i = 0; i < 11; i++) {
+      const x = cx - 200 + i * 40 + rnd() * 16
+      const y = cy - 10 + rnd() * 140
+      ctx.beginPath()
+      ctx.moveTo(x, y - 22)
+      ctx.quadraticCurveTo(x + 11, y, x, y + 9)
+      ctx.quadraticCurveTo(x - 11, y, x, y - 22)
+      ctx.fill()
+    }
+    cloud(ctx, cx - 10, cy - 75, 115, '#e2e8f0')
+    cloud(ctx, cx - 10, cy - 88, 105, '#f8fafc')
+  },
+
+  // On a roll: a rocket taking off, with a shuttle in the window.
+  rocket(ctx, cx, cy, [deep, bright]) {
+    for (const [x, y, r] of [
+      [cx - 230, cy - 170, 16],
+      [cx + 200, cy - 40, 12],
+      [cx - 150, cy + 150, 10],
+      [cx + 240, cy - 210, 20],
+    ]) {
+      star(ctx, x, y, r, '#ffffff', 4, 0.35)
+    }
+    ctx.save()
+    ctx.translate(cx, cy)
+    ctx.rotate(0.6)
+    flame(ctx, 0, 205, 100, -190)
+    ctx.fillStyle = bright
+    for (const side of [-1, 1]) {
+      ctx.beginPath()
+      ctx.moveTo(side * 60, 90)
+      ctx.lineTo(side * 120, 190)
+      ctx.lineTo(side * 115, 230)
+      ctx.lineTo(side * 55, 180)
+      ctx.fill()
+    }
+    ctx.fillStyle = '#f8fafc'
+    ctx.beginPath()
+    ctx.moveTo(0, -230)
+    ctx.bezierCurveTo(70, -170, 82, -40, 70, 110)
+    ctx.lineTo(55, 200)
+    ctx.lineTo(-55, 200)
+    ctx.lineTo(-70, 110)
+    ctx.bezierCurveTo(-82, -40, -70, -170, 0, -230)
+    ctx.fill()
+    ctx.fillStyle = bright
+    ctx.beginPath()
+    ctx.moveTo(0, -230)
+    ctx.bezierCurveTo(40, -196, 56, -160, 62, -130)
+    ctx.lineTo(-62, -130)
+    ctx.bezierCurveTo(-56, -160, -40, -196, 0, -230)
+    ctx.fill()
+    ctx.fillRect(-58, 150, 116, 20)
+    ctx.fillStyle = deep
+    ctx.beginPath()
+    ctx.arc(0, -30, 50, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.strokeStyle = '#cbd5e1'
+    ctx.lineWidth = 10
+    ctx.stroke()
+    shuttle(ctx, 0, -2, 70, 0, bright)
+    ctx.restore()
+  },
+
+  // Best win rate: a shuttle in the bullseye.
+  target(ctx, cx, cy, [deep, bright, light]) {
+    const rings = [210, 168, 126, 84, 42]
+    rings.forEach((r, i) => {
+      ctx.fillStyle = i % 2 ? bright : '#ffffff'
+      if (i === rings.length - 1) ctx.fillStyle = '#facc15'
+      ctx.beginPath()
+      ctx.arc(cx, cy + 10, r, 0, Math.PI * 2)
+      ctx.fill()
+    })
+    ctx.strokeStyle = deep
+    ctx.lineWidth = 4
+    ctx.beginPath()
+    ctx.arc(cx, cy + 10, 210, 0, Math.PI * 2)
+    ctx.stroke()
+    burst(ctx, cx, cy + 10, 230, 270, 10, light, 8)
+    shuttle(ctx, cx + 6, cy + 12, 230, -0.7, deep)
+  },
+
+  // Most games: a tube spilling shuttles.
+  tube(ctx, cx, cy, [deep, bright]) {
+    ctx.save()
+    ctx.translate(cx - 70, cy + 40)
+    ctx.rotate(-0.95)
+    ctx.fillStyle = '#ffffff'
+    ctx.beginPath()
+    ctx.roundRect(-70, -40, 140, 300, 22)
+    ctx.fill()
+    ctx.fillStyle = bright
+    ctx.fillRect(-70, 60, 140, 70)
+    ctx.fillStyle = deep
+    ctx.beginPath()
+    ctx.roundRect(-74, 230, 148, 40, 14)
+    ctx.fill()
+    ctx.fillStyle = 'rgba(15,23,42,0.25)'
+    ctx.beginPath()
+    ctx.ellipse(0, -40, 70, 22, 0, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.restore()
+    for (const [x, y, a] of [
+      [cx - 60, cy - 30, 0.2],
+      [cx + 40, cy - 70, 0.9],
+      [cx + 150, cy - 10, 1.5],
+      [cx + 200, cy + 120, 2.2],
+    ]) {
+      shuttle(ctx, x, y, 125, a, bright)
+    }
+  },
+
+  // Biggest rivalry: rackets clashing, with a bolt of lightning.
+  clash(ctx, cx, cy, [deep, , light]) {
+    star(ctx, cx, cy - 120, 120, 'rgba(253,224,71,0.9)', 12, 0.55)
+    racket(ctx, cx - 230, cy + 210, 400, 0.55, '#ffffff', deep)
+    racket(ctx, cx + 230, cy + 210, 400, -0.55, '#ffffff', deep)
+    ctx.fillStyle = '#fde047'
+    ctx.strokeStyle = deep
+    ctx.lineWidth = 6
+    ctx.beginPath()
+    ctx.moveTo(cx + 20, cy - 230)
+    ctx.lineTo(cx - 45, cy - 110)
+    ctx.lineTo(cx + 5, cy - 110)
+    ctx.lineTo(cx - 30, cy + 10)
+    ctx.lineTo(cx + 60, cy - 135)
+    ctx.lineTo(cx + 10, cy - 135)
+    ctx.closePath()
+    ctx.fill()
+    ctx.stroke()
+    burst(ctx, cx, cy - 120, 150, 190, 12, light, 8, 0.2)
+  },
+
+  // Longest game: an hourglass.
+  hourglass(ctx, cx, cy, [deep]) {
+    const top = cy - 190
+    const bottom = cy + 190
+    ctx.fillStyle = 'rgba(255,255,255,0.25)'
+    ctx.beginPath()
+    ctx.moveTo(cx - 125, top + 20)
+    ctx.bezierCurveTo(cx - 125, cy - 60, cx - 16, cy - 30, cx - 16, cy)
+    ctx.bezierCurveTo(cx - 16, cy + 30, cx - 125, cy + 60, cx - 125, bottom - 20)
+    ctx.lineTo(cx + 125, bottom - 20)
+    ctx.bezierCurveTo(cx + 125, cy + 60, cx + 16, cy + 30, cx + 16, cy)
+    ctx.bezierCurveTo(cx + 16, cy - 30, cx + 125, cy - 60, cx + 125, top + 20)
+    ctx.closePath()
+    ctx.fill()
+    ctx.strokeStyle = '#ffffff'
+    ctx.lineWidth = 8
+    ctx.stroke()
+    // Sand: a little left on top, a heap below, a stream between.
+    ctx.fillStyle = '#fcd34d'
+    ctx.beginPath()
+    ctx.moveTo(cx - 70, cy - 70)
+    ctx.quadraticCurveTo(cx, cy - 85, cx + 70, cy - 70)
+    ctx.quadraticCurveTo(cx + 30, cy - 30, cx, cy - 8)
+    ctx.quadraticCurveTo(cx - 30, cy - 30, cx - 70, cy - 70)
+    ctx.fill()
+    ctx.beginPath()
+    ctx.moveTo(cx - 118, bottom - 22)
+    ctx.quadraticCurveTo(cx, cy + 40, cx + 118, bottom - 22)
+    ctx.fill()
+    ctx.fillRect(cx - 3, cy - 8, 6, 120)
+    ctx.fillStyle = '#ffffff'
+    for (const y of [top, bottom]) {
+      ctx.beginPath()
+      ctx.roundRect(cx - 160, y - 18, 320, 36, 14)
+      ctx.fill()
+    }
+    ctx.fillStyle = deep
+    for (const x of [cx - 140, cx + 140]) ctx.fillRect(x - 6, top + 16, 12, bottom - top - 32)
+    star(ctx, cx + 210, cy - 170, 20, '#ffffff', 4, 0.35)
+    star(ctx, cx - 220, cy + 120, 14, '#ffffff', 4, 0.35)
+  },
+
+  // Shortest game: a stopwatch with speed lines.
+  stopwatch(ctx, cx, cy, [deep, bright, light]) {
+    ctx.strokeStyle = 'rgba(255,255,255,0.7)'
+    ctx.lineCap = 'round'
+    for (const [dy, len] of [
+      [-80, 150],
+      [0, 210],
+      [80, 130],
+    ]) {
+      ctx.lineWidth = 14
+      ctx.beginPath()
+      ctx.moveTo(cx - 200, cy + 30 + dy)
+      ctx.lineTo(cx - 200 - len, cy + 30 + dy)
+      ctx.stroke()
+    }
+    ctx.fillStyle = '#ffffff'
+    ctx.beginPath()
+    ctx.roundRect(cx - 30, cy - 200, 60, 50, 10)
+    ctx.fill()
+    ctx.beginPath()
+    ctx.roundRect(cx - 45, cy - 215, 90, 26, 10)
+    ctx.fill()
+    ctx.save()
+    ctx.translate(cx + 140, cy - 125)
+    ctx.rotate(0.8)
+    ctx.beginPath()
+    ctx.roundRect(-18, -25, 36, 40, 8)
+    ctx.fill()
+    ctx.restore()
+    ctx.beginPath()
+    ctx.arc(cx, cy + 30, 185, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.strokeStyle = bright
+    ctx.lineWidth = 16
+    ctx.stroke()
+    ctx.fillStyle = light
+    ctx.beginPath()
+    ctx.moveTo(cx, cy + 30)
+    ctx.arc(cx, cy + 30, 150, -Math.PI / 2, -Math.PI / 2 + 0.9)
+    ctx.closePath()
+    ctx.fill()
+    ctx.strokeStyle = deep
+    for (let i = 0; i < 12; i++) {
+      const a = (i / 12) * Math.PI * 2
+      ctx.lineWidth = i % 3 ? 5 : 10
+      ctx.beginPath()
+      ctx.moveTo(cx + Math.sin(a) * 140, cy + 30 - Math.cos(a) * 140)
+      ctx.lineTo(cx + Math.sin(a) * 165, cy + 30 - Math.cos(a) * 165)
+      ctx.stroke()
+    }
+    ctx.lineWidth = 12
+    ctx.beginPath()
+    ctx.moveTo(cx, cy + 30)
+    ctx.lineTo(cx + Math.sin(0.9) * 130, cy + 30 - Math.cos(0.9) * 130)
+    ctx.stroke()
+    ctx.fillStyle = deep
+    ctx.beginPath()
+    ctx.arc(cx, cy + 30, 16, 0, Math.PI * 2)
+    ctx.fill()
+  },
+
+  // Early bird: the sun coming up, with birds.
+  sunrise(ctx, cx, cy, [deep]) {
+    const horizon = cy + 120
+    ctx.save()
+    ctx.beginPath()
+    ctx.rect(0, 0, W, horizon)
+    ctx.clip()
+    burst(ctx, cx, horizon, 210, 300, 14, 'rgba(254,240,138,0.85)', 16, Math.PI)
+    const sun = ctx.createRadialGradient(cx, horizon, 20, cx, horizon, 190)
+    sun.addColorStop(0, '#fef9c3')
+    sun.addColorStop(1, '#f59e0b')
+    ctx.fillStyle = sun
+    ctx.beginPath()
+    ctx.arc(cx, horizon, 180, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.restore()
+    ctx.fillStyle = 'rgba(255,255,255,0.3)'
+    ctx.beginPath()
+    ctx.moveTo(cx - 330, horizon + 70)
+    ctx.quadraticCurveTo(cx - 180, horizon - 30, cx - 20, horizon + 20)
+    ctx.quadraticCurveTo(cx + 160, horizon - 40, cx + 330, horizon + 30)
+    ctx.lineTo(cx + 330, horizon + 120)
+    ctx.lineTo(cx - 330, horizon + 120)
+    ctx.fill()
+    ctx.fillStyle = deep
+    ctx.fillRect(cx - 330, horizon, 660, 8)
+    ctx.strokeStyle = '#ffffff'
+    ctx.lineWidth = 9
+    ctx.lineCap = 'round'
+    for (const [x, y, s] of [
+      [cx - 170, cy - 160, 1.2],
+      [cx - 60, cy - 210, 0.9],
+      [cx + 190, cy - 140, 1],
+    ]) {
+      ctx.beginPath()
+      ctx.moveTo(x - 40 * s, y)
+      ctx.quadraticCurveTo(x - 18 * s, y - 26 * s, x, y)
+      ctx.quadraticCurveTo(x + 18 * s, y - 26 * s, x + 40 * s, y)
+      ctx.stroke()
+    }
+  },
+
+  // Last to arrive: the moon and stars, fast asleep.
+  moon(ctx, cx, cy, [, , light]) {
+    ctx.save()
+    ctx.beginPath()
+    ctx.rect(0, 0, W, 700)
+    ctx.arc(cx + 80, cy - 70, 160, 0, Math.PI * 2, true)
+    ctx.clip()
+    const moon = ctx.createRadialGradient(cx - 60, cy - 40, 20, cx - 20, cy, 220)
+    moon.addColorStop(0, '#fefce8')
+    moon.addColorStop(1, '#fde68a')
+    ctx.fillStyle = moon
+    ctx.beginPath()
+    ctx.arc(cx - 20, cy + 10, 200, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.restore()
+    for (const [x, y, r] of [
+      [cx + 200, cy + 110, 22],
+      [cx + 250, cy - 40, 14],
+      [cx - 250, cy - 170, 18],
+      [cx + 110, cy + 200, 12],
+      [cx - 230, cy + 160, 12],
+    ]) {
+      star(ctx, x, y, r, '#ffffff', 5, 0.5)
+    }
+    const text = writer(ctx)
+    ctx.textBaseline = 'alphabetic'
+    text('z', cx + 110, cy - 60, 56, light, 900, 'center')
+    text('z', cx + 165, cy - 110, 72, light, 900, 'center')
+    text('Z', cx + 235, cy - 165, 92, '#ffffff', 900, 'center')
+  },
+}
+
+export interface AwardCard {
   title: string
-  who: string
-  value: string
+  /** Missing while nobody has won it yet; `empty` says why. */
+  who?: string
+  value?: string
   detail: string
   /** Which games: "All time", "Last 3 months" or a session date. */
   scope: string
   tone: AwardTone
-}): Blob {
-  const H = 1350
-  const [c, ctx] = canvas(W, H)
+  art: AwardArt
+  empty?: string
+}
+
+export const AWARD_SIZE = { width: W, height: 1350 }
+
+/**
+ * Draws one award (e.g. Unbeatable duo) as a 4:5 card, in a 1080 × 1350
+ * space (scale the context to draw it smaller): the award's colours, court
+ * lines, confetti and its own picture, then who won it, the big number and
+ * what it means. The Stats tab shows these; Share sends the same card.
+ */
+export function drawAward(ctx: Ctx, { title, who, value, detail, scope, tone, art, empty }: AwardCard) {
+  const H = AWARD_SIZE.height
   const text = writer(ctx)
-  const [deep, bright, light] = AWARD_TONES[tone]
+  const colors = AWARD_TONES[tone]
+  const [deep, bright, light] = colors
+  const won = !!(who && value)
 
   const bg = ctx.createLinearGradient(0, 0, W * 0.4, H)
   bg.addColorStop(0, bright)
@@ -515,19 +1069,23 @@ export function awardImage({
   ctx.fillStyle = bg
   ctx.fillRect(0, 0, W, H)
   court(ctx, 170, -160, 740, 1500, 0.32, 'rgba(255,255,255,0.09)', 6)
-  confetti(ctx, 0, 0, W, 560, [light, '#ffffff', '#fde68a', light], 46, title.length * 31)
-  confetti(ctx, 0, 1080, W, 270, [light, '#ffffff', '#fde68a'], 18, title.length * 17)
+  if (won) {
+    confetti(ctx, 0, 0, W, 560, [light, '#ffffff', '#fde68a', light], 46, title.length * 31)
+    confetti(ctx, 0, 1080, W, 270, [light, '#ffffff', '#fde68a'], 18, title.length * 17)
+  }
 
-  // A glow behind the shuttle.
-  const glow = ctx.createRadialGradient(W / 2, 330, 10, W / 2, 330, 260)
-  glow.addColorStop(0, 'rgba(255,255,255,0.35)')
+  // A glow behind the picture.
+  const glow = ctx.createRadialGradient(W / 2, 340, 10, W / 2, 340, 300)
+  glow.addColorStop(0, 'rgba(255,255,255,0.32)')
   glow.addColorStop(1, 'rgba(255,255,255,0)')
   ctx.fillStyle = glow
-  ctx.fillRect(0, 60, W, 540)
-  flyingShuttle(ctx, W / 2 + 130, 250, 270, bright, 'rgba(255,255,255,0.4)')
+  ctx.fillRect(0, 40, W, 600)
+  ctx.save()
+  ARTS[art](ctx, W / 2, 340, colors)
+  ctx.restore()
 
   ctx.textBaseline = 'alphabetic'
-  text("MY BADMINTON QUEUE · SERVE N' SHOUT", W / 2, 96, 26, 'rgba(255,255,255,0.8)', 700, 'center')
+  text(brand().toUpperCase(), W / 2, 86, 26, 'rgba(255,255,255,0.8)', 700, 'center')
 
   // Award name on a ribbon.
   ctx.font = `800 40px ${FONT}`
@@ -535,22 +1093,36 @@ export function awardImage({
   const ribbon = ctx.measureText(label).width + 90
   ctx.fillStyle = 'rgba(255,255,255,0.95)'
   ctx.beginPath()
-  ctx.roundRect(W / 2 - ribbon / 2, 600, ribbon, 76, 38)
+  ctx.roundRect(W / 2 - ribbon / 2, 610, ribbon, 76, 38)
   ctx.fill()
-  text(label, W / 2, 652, 40, deep, 800, 'center')
+  text(label, W / 2, 662, 40, deep, 800, 'center')
 
-  ctx.font = `800 78px ${FONT}`
-  const lines = wrap(ctx, who, W - 2 * PAD - 40, 2)
-  lines.forEach((l, i) => text(l, W / 2, 790 + i * 88, 78, '#ffffff', 800, 'center'))
-  const below = 790 + (lines.length - 1) * 88
-  text(value, W / 2, below + 210, 190, light, 900, 'center')
-  ctx.font = `500 38px ${FONT}`
-  text(fit(ctx, detail, W - 2 * PAD), W / 2, below + 290, 38, 'rgba(255,255,255,0.9)', 500, 'center')
+  if (won) {
+    ctx.font = `800 78px ${FONT}`
+    const lines = wrap(ctx, who, W - 2 * PAD - 40, 2)
+    lines.forEach((l, i) => text(l, W / 2, 800 + i * 88, 78, '#ffffff', 800, 'center'))
+    const below = 800 + (lines.length - 1) * 88
+    ctx.font = `900 190px ${FONT}`
+    text(fit(ctx, value, W - 2 * PAD), W / 2, below + 205, 190, light, 900, 'center')
+    ctx.font = `500 38px ${FONT}`
+    text(fit(ctx, detail, W - 2 * PAD), W / 2, below + 285, 38, 'rgba(255,255,255,0.9)', 500, 'center')
+  } else {
+    ctx.font = `600 52px ${FONT}`
+    wrap(ctx, empty ?? 'Not enough results yet', W - 2 * PAD - 80, 3).forEach((l, i) =>
+      text(l, W / 2, 860 + i * 70, 52, 'rgba(255,255,255,0.85)', 600, 'center'),
+    )
+  }
 
   // Footer: which games this covers.
   ctx.fillStyle = 'rgba(0,0,0,0.18)'
   ctx.fillRect(0, H - 110, W, 110)
   text(scope, W / 2, H - 44, 32, '#ffffff', 700, 'center')
+}
+
+/** One award card as a PNG, ready to share. */
+export function awardImage(card: AwardCard): Blob {
+  const [c, ctx] = canvas(AWARD_SIZE.width, AWARD_SIZE.height)
+  drawAward(ctx, card)
   return png(c)
 }
 
