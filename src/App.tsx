@@ -68,10 +68,7 @@ function Main() {
       <header className="flex items-center gap-6 border-b border-slate-200 bg-white px-6 py-3">
         <h1 className="leading-tight whitespace-nowrap text-teal-700">
           <span className="block text-2xl font-black tracking-tight">My Badminton Queue</span>
-          <span className="flex items-center gap-2 text-sm font-semibold text-teal-600/80">
-            by Serve N&apos; Shout
-            <CloudStatus onOpen={() => setTab('settings')} />
-          </span>
+          <CloudStatus onOpen={() => setTab('settings')} />
         </h1>
         <div className="ml-auto">
           <SessionTimer />

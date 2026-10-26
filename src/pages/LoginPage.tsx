@@ -66,7 +66,6 @@ export function LoginPage({ onOffline }: { onOffline?: () => void }) {
       <div className="w-full max-w-md">
         <div className="mb-5 text-center text-white">
           <h1 className="text-3xl font-black tracking-tight">My Badminton Queue</h1>
-          <p className="font-semibold text-teal-100">by Serve N&apos; Shout</p>
         </div>
         <div className="rounded-3xl bg-white p-6 shadow-xl">
           {view === 'signin' && (

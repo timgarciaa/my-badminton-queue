@@ -1,3 +1,4 @@
+import { useCloud } from './cloud'
 import { ordinal, type PlayerRecord } from './stats'
 
 export interface StandingRow extends PlayerRecord {
@@ -5,6 +6,12 @@ export interface StandingRow extends PlayerRecord {
   rate: number | null
   /** Place, shared by tied players (1, 1, 2...). */
   place: number
+}
+
+/** The line at the top of a shared image: the app, and the club when signed in. */
+const brand = () => {
+  const club = useCloud.getState().club?.name
+  return club ? `My Badminton Queue · ${club}` : 'My Badminton Queue'
 }
 
 const W = 1080
@@ -321,7 +328,7 @@ export function standingsImage(rows: StandingRow[], { title, subtitle }: { title
   ctx.restore()
 
   ctx.textBaseline = 'alphabetic'
-  text("My Badminton Queue · Serve N' Shout", PAD, 76, 28, 'rgba(255,255,255,0.8)')
+  text(brand(), PAD, 76, 28, 'rgba(255,255,255,0.8)')
   text(title, PAD, 160, 66, '#ffffff', 800)
   text(subtitle, PAD, 214, 30, 'rgba(255,255,255,0.88)', 500)
 
@@ -405,7 +412,7 @@ export function checkinImage(rows: CheckinImageRow[], { title, subtitle }: { tit
   ctx.restore()
 
   ctx.textBaseline = 'alphabetic'
-  text("My Badminton Queue · Serve N' Shout", PAD, 76, 28, 'rgba(255,255,255,0.8)')
+  text(brand(), PAD, 76, 28, 'rgba(255,255,255,0.8)')
   text(title, PAD, 160, 62, '#ffffff', 800)
   text(subtitle, PAD, 214, 30, 'rgba(255,255,255,0.88)', 500)
 
