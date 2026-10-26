@@ -21,7 +21,9 @@ output() {
 FUNCTION=$(aws cloudformation describe-stack-resource --stack-name "$STACK" --logical-resource-id Function \
   --query StackResourceDetail.PhysicalResourceId --output text)
 
-ZIP=$(mktemp -d)/checkin.zip
+TMP=$(mktemp -d)
+trap 'rm -rf "$TMP"' EXIT
+ZIP=$TMP/checkin.zip
 zip -qj "$ZIP" lambda.mjs checkin.mjs club.mjs auth.mjs
 aws lambda update-function-code --function-name "$FUNCTION" --zip-file "fileb://$ZIP" --query LastUpdateStatus --output text
 aws lambda wait function-updated --function-name "$FUNCTION"

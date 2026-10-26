@@ -31,10 +31,15 @@ ask_password() {
   PW="$pw" python3 -c 'import json, os; print(json.dumps(os.environ["PW"]))'
 }
 
-# Sets a permanent password, passed on stdin so it doesn't show in the process list.
+# Sets a permanent password. It goes in a file only this user can read (and
+# deleted straight after) so it doesn't show in the process list.
 set_password() {
-  local user=$1 pw_json=$2
-  aws cognito-idp admin-set-user-password --cli-input-json file:///dev/stdin <<<"{\"UserPoolId\":\"$POOL\",\"Username\":\"$user\",\"Password\":$pw_json,\"Permanent\":true}"
+  local user=$1 pw_json=$2 dir
+  dir=$(mktemp -d)
+  chmod 700 "$dir"
+  printf '{"UserPoolId":"%s","Username":"%s","Password":%s,"Permanent":true}' "$POOL" "$user" "$pw_json" >"$dir/input.json"
+  aws cognito-idp admin-set-user-password --cli-input-json "file://$dir/input.json" || { rm -rf "$dir"; return 1; }
+  rm -rf "$dir"
 }
 
 case "${1:-}" in
@@ -59,7 +64,7 @@ case "${1:-}" in
     pw=$(ask_password)
     aws cognito-idp admin-create-user --user-pool-id "$POOL" --username "$user" \
       --user-attributes "Name=custom:club,Value=$club" --message-action SUPPRESS --query User.Username --output text >/dev/null
-    set_password "$user" "$pw"
+    set_password "$user" "$pw" || { echo "The account was made but the password wasn't set. Run: $0 set-password $user" >&2; exit 1; }
     echo "Added $user as an organizer of $found."
     ;;
   set-password)
