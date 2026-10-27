@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { ScoreDialog } from '../components/Score'
 import { Standings } from '../components/Standings'
 import { finishedGames, longDate } from '../lib/stats'
 import { EmptyState } from '../components/ui'
@@ -73,7 +74,7 @@ export function GamesPage() {
             </button>
           )}
         </div>
-        <p className="px-4 pt-3 text-xs text-slate-500">Tap a team to set or change the winner. Tap it again to clear.</p>
+        <p className="px-4 pt-3 text-xs text-slate-500">Tap a team to set or clear the winner. Tap between the teams to add a score (optional).</p>
 
         <div className="min-h-0 flex-1 overflow-y-auto p-4 pt-2">
           {shown.length === 0 ? (
@@ -123,6 +124,7 @@ function GameRow({
 }) {
   const setWinner = useStore((s) => s.setWinner)
   const setOutOfHours = useStore((s) => s.setOutOfHours)
+  const [scoring, setScoring] = useState(false)
   const shuttleTypes = useStore((s) => s.session.shuttleTypes)
   const mins = Math.round(((game.endedAt ?? game.startedAt) - game.startedAt) / 60_000)
   const time = new Date(game.startedAt).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
@@ -174,7 +176,22 @@ function GameRow({
           </p>
         </div>
         {team('A', game.teamA)}
-        <span className="text-xs font-bold text-slate-400">VS</span>
+        <button
+          className="flex h-14 w-14 shrink-0 flex-col items-center justify-center rounded-xl hover:bg-slate-50"
+          onClick={() => setScoring(true)}
+          aria-label={game.score ? `Score ${game.score[0]}–${game.score[1]}, change` : 'Add the score'}
+        >
+          {game.score ? (
+            <span className="text-base font-black whitespace-nowrap text-slate-800 tabular-nums">
+              {game.score[0]}–{game.score[1]}
+            </span>
+          ) : (
+            <>
+              <span className="text-xs font-bold text-slate-400">VS</span>
+              <span className="text-xs font-semibold text-teal-700">+ Score</span>
+            </>
+          )}
+        </button>
         {team('B', game.teamB)}
       </div>
       {(game.swap || game.set || !game.winner) && (
@@ -203,6 +220,14 @@ function GameRow({
             </span>
           )}
         </p>
+      )}
+      {scoring && (
+        <ScoreDialog
+          game={game}
+          title={`Score · Game ${game.number}${showDate ? ` · ${game.date}` : ''}`}
+          teamName={(side) => (side === 'A' ? game.teamA : game.teamB).map(name).join(' & ')}
+          onClose={() => setScoring(false)}
+        />
       )}
     </li>
   )

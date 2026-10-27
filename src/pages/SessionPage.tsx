@@ -3,9 +3,10 @@ import { allSplits, bumpedPlayers, meetCounts, partnerCounts } from '../lib/bala
 import { gameShuttleType, shuttlesInStock } from '../lib/cost'
 import { matchSkill, planGames, winnersStayGame } from '../lib/plan'
 import { QueuePanel } from '../components/QueuePanel'
+import { PointsInput } from '../components/Score'
 import { SetGameDialog } from '../components/SetGameDialog'
 import { PlayerTags, Stepper, elapsed, useNow } from '../components/ui'
-import { gameNumber, helpFrom, playedGames, sessionsWithin } from '../lib/stats'
+import { gameNumber, helpFrom, parseScore, playedGames, scoreLeader, sessionsWithin } from '../lib/stats'
 import { isHelpStruggling, isSkillMatch, isWinnersStay, isWinnersTogether, usePlayerMap, useStore } from '../store/useStore'
 import type { Game, GameSwap, Pair, Player, Session } from '../types'
 
@@ -177,6 +178,10 @@ function CourtCard({
   const shuttleTypes = session.shuttleTypes
   const setGameShuttleType = useStore((s) => s.setGameShuttleType)
   const [askWinner, setAskWinner] = useState(false)
+  // Points typed while ending the game (optional).
+  const [points, setPoints] = useState<[string, string]>(['', ''])
+  const score = parseScore(points)
+  const lead = scoreLeader(score)
   const skillOf = (id: string) => players.get(id)?.skill ?? 3
   const teamName = (t: Pair) => t.map((id) => players.get(id)?.name ?? '?').join(' & ')
 
@@ -184,6 +189,8 @@ function CourtCard({
     setAskWinner(false)
     if (!game) return
     const s = useStore.getState().session
+    // Out of hours keeps any score; otherwise a score goes with its winner.
+    const scored = outOfHours || scoreLeader(score) === winner ? score : undefined
     if (winner && isWinnersStay(s, game.court)) {
       // Winners stay on, split up, each with one of the next two in line.
       const winners = winner === 'A' ? game.teamA : game.teamB
@@ -193,9 +200,9 @@ function CourtCard({
       const split = !isWinnersTogether(s, game.court)
       const skill = matchSkill(skillOf, isSkillMatch(s))
       const next = !resting && winnersStayGame(winners, waiting, skill, partnerCounts(s.games), split)
-      if (next) return rotateWinners(game.id, winner, next.teamA, next.teamB)
+      if (next) return rotateWinners(game.id, winner, next.teamA, next.teamB, scored)
     }
-    endGame(game.id, winner, outOfHours)
+    endGame(game.id, winner, outOfHours, scored)
   }
 
   const start = () => {
@@ -304,13 +311,29 @@ function CourtCard({
                 {together ? 'Winners stay on together' : 'Winners stay on and split up'}; losers go to the queue.
               </p>
             )}
-            {(['A', 'B'] as const).map((side) => (
-              <button key={side} className="d-btn d-btn-primary w-full" onClick={() => finish(side)}>
-                <span className="truncate">{teamName(side === 'A' ? game.teamA : game.teamB)}</span>
-              </button>
+            {(['A', 'B'] as const).map((side, i) => (
+              <div key={side} className="flex gap-2">
+                <button
+                  className="d-btn d-btn-primary min-w-0 flex-1"
+                  // A score picks the winner; it can't say the other team won.
+                  disabled={!!score && lead !== side}
+                  onClick={() => finish(side)}
+                >
+                  <span className="truncate">{teamName(side === 'A' ? game.teamA : game.teamB)}</span>
+                </button>
+                <PointsInput
+                  className="h-10"
+                  label={`Points for ${teamName(side === 'A' ? game.teamA : game.teamB)} (optional)`}
+                  value={points[i]}
+                  onChange={(v) => setPoints((p) => (i === 0 ? [v, p[1]] : [p[0], v]))}
+                />
+              </div>
             ))}
+            <p className="-mt-1 text-center text-xs text-slate-400">
+              {score && !lead ? 'Tied: no winner yet' : 'Points are optional'}
+            </p>
             <div className="grid grid-cols-2 gap-2">
-              <button className="d-btn" onClick={() => finish()}>
+              <button className="d-btn" disabled={!!lead} onClick={() => finish()}>
                 No result
               </button>
               <button
@@ -359,7 +382,13 @@ function CourtCard({
             </div>
             {/* Game format sits apart from the shuttle settings above. */}
             <WinnersStayToggle court={number} className="w-full justify-between border-t border-slate-100 pt-2" />
-            <button className="d-btn d-btn-primary d-btn-lg w-full" onClick={() => setAskWinner(true)}>
+            <button
+              className="d-btn d-btn-primary d-btn-lg w-full"
+              onClick={() => {
+                setPoints(['', ''])
+                setAskWinner(true)
+              }}
+            >
               End game
             </button>
             {/* Always takes the same space so the cards stay the same shape. */}

@@ -81,6 +81,12 @@ export interface Game {
   swap?: GameSwap
   /** Winning team; missing if not recorded. */
   winner?: 'A' | 'B'
+  /**
+   * Points for teamA and teamB, if entered (optional). The team ahead is the
+   * winner, except in a game with no result or out of hours, where it's the
+   * score when it stopped.
+   */
+  score?: [number, number]
   /** Ended without a winner because the court booking ran out. */
   outOfHours?: boolean
   /** Started from a set game (four players who asked to play together). */

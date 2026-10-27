@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { CHECKIN_API, checkinLink, randomPin, useRemoteStatus } from '../lib/remoteCheckin'
 import { useStore } from '../store/useStore'
 import { ShareIcon } from './Standings'
+import { NumberField } from './NumberPad'
 
 const time = (at: number) => new Date(at).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
 
@@ -48,18 +49,16 @@ export function PhoneCheckinButton() {
   )
 }
 
-/** Four digits, with the number keypad. */
-function PinInput({ value, onChange, onEnter }: { value: string; onChange: (pin: string) => void; onEnter: () => void }) {
+/** Four digits, typed on the app's number pad. */
+function PinInput({ value, onChange }: { value: string; onChange: (pin: string) => void }) {
   return (
-    <input
-      className="field w-40 text-center font-mono text-3xl font-bold tracking-[0.4em]"
-      inputMode="numeric"
-      autoComplete="off"
-      aria-label="PIN"
+    <NumberField
+      className="w-40 font-mono text-3xl font-bold tracking-[0.4em]"
       maxLength={4}
+      label="PIN"
+      placeholder="····"
       value={value}
-      onChange={(e) => onChange(e.target.value.replace(/\D/g, '').slice(0, 4))}
-      onKeyDown={(e) => e.key === 'Enter' && value.length === 4 && onEnter()}
+      onChange={onChange}
     />
   )
 }
@@ -114,7 +113,7 @@ function PhoneCheckinDialog({ onClose }: { onClose: () => void }) {
             link alone can&apos;t check anyone in.
           </p>
           <div className="mt-5 flex items-center gap-4">
-            <PinInput value={pin} onChange={setPin} onEnter={() => openRemote(pin)} />
+            <PinInput value={pin} onChange={setPin} />
             <span className="text-sm text-slate-500">PIN for this session. Change it if you like.</span>
           </div>
           <div className="d-modal-action">
@@ -143,7 +142,7 @@ function PhoneCheckinDialog({ onClose }: { onClose: () => void }) {
                 <div className="text-sm font-bold tracking-wide text-teal-700 uppercase">PIN</div>
                 {editing ? (
                   <div className="mt-1 flex items-center gap-2">
-                    <PinInput value={pin} onChange={setPin} onEnter={savePin} />
+                    <PinInput value={pin} onChange={setPin} />
                     <button className="d-btn d-btn-primary h-11" disabled={pin.length !== 4} onClick={savePin}>
                       Save
                     </button>

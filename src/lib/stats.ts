@@ -81,6 +81,18 @@ export function ordinal(n: number): string {
   return `${n}${teen ? 'th' : (['th', 'st', 'nd', 'rd'][n % 10] ?? 'th')}`
 }
 
+/** The team ahead on points; undefined for a tie or no score. */
+export function scoreLeader(score?: [number, number]): 'A' | 'B' | undefined {
+  if (!score || score[0] === score[1]) return undefined
+  return score[0] > score[1] ? 'A' : 'B'
+}
+
+/** Both teams' points as typed, or undefined until both are filled in. */
+export function parseScore(points: [string, string]): [number, number] | undefined {
+  if (points.some((p) => p === '')) return undefined
+  return [Number(points[0]), Number(points[1])]
+}
+
 export function winRate(r: PlayerRecord): number | null {
   const decided = r.wins + r.losses
   return decided ? r.wins / decided : null

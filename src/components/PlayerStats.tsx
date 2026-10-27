@@ -271,7 +271,12 @@ function Profile({
                     {showDate && `${longDate(g.date)} · `}Game {g.number} · Court {g.court}
                   </div>
                 </div>
-                <span className="shrink-0 text-sm text-slate-500 tabular-nums">{gameTime(g)}</span>
+                {g.score && (
+                  <span className="shrink-0 text-lg font-black text-slate-800 tabular-nums">
+                    {mineA ? g.score[0] : g.score[1]}–{mineA ? g.score[1] : g.score[0]}
+                  </span>
+                )}
+                <span className="w-12 shrink-0 text-right text-sm text-slate-500 tabular-nums">{gameTime(g)}</span>
               </li>
             )
           })}

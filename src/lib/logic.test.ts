@@ -5,7 +5,7 @@ import { costSummary, courtBooking, money, sessionStarted, shuttleCount, shuttle
 import type { Help } from './balance'
 import { parseNames } from './importNames'
 import { matchSkill, planGames, winnersStayGame } from './plan'
-import { arrivals, bestRecord, checkinPlaces, checkinStandings, duoRecords, form, mateRecords, mostOften, gameExtremes, gameTime, helpFrom, ordinal, places, playedGames, sessionsWithin, standings, playerRecords, rivalries, streaks, winRate, worstRecord } from './stats'
+import { arrivals, bestRecord, scoreLeader, checkinPlaces, checkinStandings, duoRecords, form, mateRecords, mostOften, gameExtremes, gameTime, helpFrom, ordinal, places, playedGames, sessionsWithin, standings, playerRecords, rivalries, streaks, winRate, worstRecord } from './stats'
 import { dequeue, enqueue, move, nextFour, placeByArrival, pushFront, swap } from './queue'
 import { isHelpStruggling, isSkillMatch, newSession, useStore } from '../store/useStore'
 
@@ -975,6 +975,84 @@ describe('out of hours', () => {
     st.setWinner(id, 'A')
     st.setOutOfHours(id, true)
     expect(useStore.getState().history[0].games[0].outOfHours).toBeUndefined()
+  })
+})
+
+describe('scores', () => {
+  const play = () => {
+    const st = useStore.getState()
+    useStore.setState({ session: newSession(), history: [] })
+    ;['a', 'b', 'c', 'd'].forEach((id) => st.checkIn(id))
+    st.startGame(1, ['a', 'b'], ['c', 'd'])
+    return useStore.getState().session.games[0].id
+  }
+  const game = () => useStore.getState().session.games[0]
+
+  it('names the team ahead on points', () => {
+    expect(scoreLeader([21, 15])).toBe('A')
+    expect(scoreLeader([19, 21])).toBe('B')
+    expect(scoreLeader([20, 20])).toBeUndefined()
+    expect(scoreLeader(undefined)).toBeUndefined()
+  })
+
+  it('are optional when a game ends', () => {
+    const st = useStore.getState()
+    st.endGame(play(), 'A', false, [21, 17])
+    expect(game()).toMatchObject({ winner: 'A', score: [21, 17] })
+    st.endGame(play(), 'B')
+    expect(game().winner).toBe('B')
+    expect('score' in game()).toBe(false)
+    // Out of hours keeps the score where it stopped, with no winner.
+    st.endGame(play(), undefined, true, [15, 12])
+    expect(game()).toMatchObject({ winner: undefined, outOfHours: true, score: [15, 12] })
+  })
+
+  it('set the winner when added later, in history too', () => {
+    const st = useStore.getState()
+    const id = play()
+    st.setScore(id, [21, 10]) // still on court: ignored
+    expect(game().score).toBeUndefined()
+    st.endGame(id)
+    st.closeSession()
+    const past = () => useStore.getState().history[0].games[0]
+    st.setScore(id, [18, 21])
+    expect(past()).toMatchObject({ score: [18, 21], winner: 'B' })
+    st.setScore(id, [22, 20])
+    expect(past()).toMatchObject({ score: [22, 20], winner: 'A' })
+    // A tie leaves no winner; clearing the score keeps the winner.
+    st.setScore(id, [20, 20])
+    expect(past().winner).toBeUndefined()
+    st.setScore(id, [21, 19])
+    st.setScore(id, undefined)
+    expect(past()).toMatchObject({ score: undefined, winner: 'A' })
+  })
+
+  it('stay where they stood in a game out of hours', () => {
+    const st = useStore.getState()
+    const id = play()
+    st.endGame(id, undefined, true)
+    st.setScore(id, [14, 9])
+    expect(game()).toMatchObject({ score: [14, 9], winner: undefined, outOfHours: true })
+  })
+
+  it('are cleared when the winner is changed to the other team, and kept otherwise', () => {
+    const st = useStore.getState()
+    const id = play()
+    st.endGame(id, 'A', false, [21, 15])
+    st.setWinner(id, undefined)
+    expect(game()).toMatchObject({ winner: undefined, score: [21, 15] })
+    st.setWinner(id, 'A')
+    expect(game().score).toEqual([21, 15])
+    st.setWinner(id, 'B')
+    expect(game()).toMatchObject({ winner: 'B', score: undefined })
+  })
+
+  it('carry over when winners stay on', () => {
+    const st = useStore.getState()
+    const id = play()
+    ;['e', 'f'].forEach((x) => st.checkIn(x))
+    st.rotateWinners(id, 'A', ['a', 'e'], ['b', 'f'], [21, 8])
+    expect(useStore.getState().session.games.find((g) => g.id === id)).toMatchObject({ winner: 'A', score: [21, 8] })
   })
 })
 

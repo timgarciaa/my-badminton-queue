@@ -4,6 +4,7 @@ import { persist } from 'zustand/middleware'
 import { courtBooking, courtFeeOf, gameShuttleType, sessionStarted, shuttlesInStock } from '../lib/cost'
 import { heldIds, isSetReady, setIds } from '../lib/plan'
 import { applySwap, dequeue, enqueue, move, placeByArrival, pushFront, swap } from '../lib/queue'
+import { scoreLeader } from '../lib/stats'
 import type { CourtBooking, Game, GameSwap, Gender, Pair, Player, Session, SetGame, ShuttleType, Skill } from '../types'
 
 /** A check-in made on a player's phone; ids starting with new- are names not on the list. */
@@ -144,10 +145,17 @@ function beginGame(
 }
 
 /**
- * End a game: record the winner (or that the court time ran out), count the
- * game, and send players (except `keep`) to the queue.
+ * End a game: record the winner (or that the court time ran out) and the
+ * score if given, count the game, and send players (except `keep`) to the queue.
  */
-function finishGame(s: Session, gameId: string, winner?: 'A' | 'B', keep: string[] = [], outOfHours = false): Session {
+function finishGame(
+  s: Session,
+  gameId: string,
+  winner?: 'A' | 'B',
+  keep: string[] = [],
+  outOfHours = false,
+  score?: [number, number],
+): Session {
   const game = s.games.find((g) => g.id === gameId)
   if (!game || game.endedAt) return s
   const ids = [...game.teamA, ...game.teamB]
@@ -155,7 +163,9 @@ function finishGame(s: Session, gameId: string, winner?: 'A' | 'B', keep: string
   return {
     ...s,
     games: s.games.map((g) =>
-      g.id === gameId ? { ...g, endedAt: Date.now(), winner, ...(outOfHours && !winner && { outOfHours: true }) } : g,
+      g.id === gameId
+        ? { ...g, endedAt: Date.now(), winner, ...(outOfHours && !winner && { outOfHours: true }), ...(score && { score }) }
+        : g,
     ),
     courts: s.courts.map((c) => (c === gameId ? null : c)),
     attendees: s.attendees.map((a) => (ids.includes(a.playerId) ? { ...a, gamesPlayed: a.gamesPlayed + 1 } : a)),
@@ -240,13 +250,13 @@ interface State {
    * A game already there trades courts with it. Only the court changes.
    */
   moveGame: (gameId: string, court: number) => void
-  /** End a game with a winner, no result, or out of hours (the court booking ran out). */
-  endGame: (gameId: string, winner?: 'A' | 'B', outOfHours?: boolean) => void
+  /** End a game with a winner, no result, or out of hours (the court booking ran out), and the score if entered. */
+  endGame: (gameId: string, winner?: 'A' | 'B', outOfHours?: boolean, score?: [number, number]) => void
   /**
    * Winners stay: end the game, send the losers to the queue, and start the
    * next game on the same court with the winners split up (teamA/teamB).
    */
-  rotateWinners: (gameId: string, winner: 'A' | 'B', teamA: Pair, teamB: Pair) => void
+  rotateWinners: (gameId: string, winner: 'A' | 'B', teamA: Pair, teamB: Pair, score?: [number, number]) => void
   /** Turn winners stay on or off for one court. */
   setWinnersStay: (court: number, on: boolean) => void
   /** On a winners-stay court, split the winners up (default) or keep them together. */
@@ -257,8 +267,17 @@ interface State {
   setHelpStruggling: (on: boolean) => void
   /** Mark a finished game with no winner as out of hours (court time ran out), or undo it; this session or history. */
   setOutOfHours: (gameId: string, on: boolean) => void
-  /** Set or clear the winner of a finished game, in this session or history. A winner replaces "out of hours". */
+  /**
+   * Set or clear the winner of a finished game, in this session or history. A
+   * winner replaces "out of hours", and clears a score that says otherwise.
+   */
   setWinner: (gameId: string, winner?: 'A' | 'B') => void
+  /**
+   * Set or clear the score of a finished game, in this session or history. The
+   * team ahead becomes the winner (a tie leaves none), except in a game out of
+   * hours, where the score is where it stood.
+   */
+  setScore: (gameId: string, score?: [number, number]) => void
   cancelGame: (gameId: string) => void
 
   closeSession: () => void
@@ -528,14 +547,15 @@ export const useStore = create<State>()(
             }
           }),
 
-        endGame: (gameId, winner, outOfHours) => updateSession((s) => finishGame(s, gameId, winner, [], outOfHours)),
+        endGame: (gameId, winner, outOfHours, score) =>
+          updateSession((s) => finishGame(s, gameId, winner, [], outOfHours, score)),
 
-        rotateWinners: (gameId, winner, teamA, teamB) =>
+        rotateWinners: (gameId, winner, teamA, teamB, score) =>
           updateSession((s) => {
             const game = s.games.find((g) => g.id === gameId)
             if (!game || game.endedAt) return s
             const winners = winner === 'A' ? game.teamA : game.teamB
-            const ended = finishGame(s, gameId, winner, winners)
+            const ended = finishGame(s, gameId, winner, winners, false, score)
             const next = beginGame(ended, game.court, teamA, teamB, { stayed: winners, shuttleType: game.shuttleType })
             // Couldn't start (e.g. a player left): winners go back in line instead.
             return next === ended ? { ...ended, queue: enqueue(ended.queue, winners) } : next
@@ -564,9 +584,31 @@ export const useStore = create<State>()(
                 ? {
                     ...s,
                     games: s.games.map((g) =>
-                      g.id === gameId ? { ...g, winner, outOfHours: winner ? undefined : g.outOfHours } : g,
+                      g.id === gameId
+                        ? {
+                            ...g,
+                            winner,
+                            outOfHours: winner ? undefined : g.outOfHours,
+                            score: winner && scoreLeader(g.score) !== winner ? undefined : g.score,
+                          }
+                        : g,
                     ),
                   }
+                : s
+            return { session: fix(st.session), history: st.history.map(fix) }
+          }),
+
+        setScore: (gameId, score) =>
+          set((st) => {
+            const scored = (g: Game): Game => {
+              if (!score) return { ...g, score: undefined }
+              if (g.outOfHours && !g.winner) return { ...g, score }
+              const winner = scoreLeader(score)
+              return { ...g, score, winner, outOfHours: winner ? undefined : g.outOfHours }
+            }
+            const fix = (s: Session): Session =>
+              s.games.some((g) => g.id === gameId && g.endedAt)
+                ? { ...s, games: s.games.map((g) => (g.id === gameId ? scored(g) : g)) }
                 : s
             return { session: fix(st.session), history: st.history.map(fix) }
           }),
