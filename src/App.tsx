@@ -1,6 +1,6 @@
-import { useState, useSyncExternalStore } from 'react'
+import { useState } from 'react'
 import { CloudBanner, CloudStatus } from './components/Cloud'
-import { CLOUD, hasData, signInAgain, useCloud, useCloudSync, useSyncStatus } from './lib/cloud'
+import { CLOUD, useCloud, useCloudSync, useSyncStatus } from './lib/cloud'
 import { LoginPage } from './pages/LoginPage'
 import { costSummary, money } from './lib/cost'
 import { useRemoteCheckin, useRemoteStatus } from './lib/remoteCheckin'
@@ -27,31 +27,15 @@ const TABS = [
 
 type Tab = (typeof TABS)[number]['id']
 
-function useOnline() {
-  return useSyncExternalStore(
-    (onChange) => {
-      window.addEventListener('online', onChange)
-      window.addEventListener('offline', onChange)
-      return () => {
-        window.removeEventListener('online', onChange)
-        window.removeEventListener('offline', onChange)
-      }
-    },
-    () => navigator.onLine,
-  )
-}
-
 /**
- * Organizers sign in before using the app. An offline iPad that already has
- * data can skip it, so a session still runs at a court with no signal.
+ * Organizers sign in before using the app, and a signed-out iPad goes back to
+ * signing in. A signed-in iPad keeps working offline (a court with no signal)
+ * and saves when it's back online.
  */
 export default function App() {
   const signedIn = useCloud((s) => !!s.auth && !!s.club)
-  const hasLocal = useStore((s) => hasData(s))
-  const online = useOnline()
-  const [offline, setOffline] = useState(false)
-  if (!CLOUD || signedIn || offline) return <Main />
-  return <LoginPage onOffline={!online && hasLocal ? () => setOffline(true) : undefined} />
+  if (!CLOUD || signedIn) return <Main />
+  return <LoginPage />
 }
 
 function Main() {
@@ -87,7 +71,7 @@ function Main() {
         </div>
       </header>
 
-      <CloudBanner onSignIn={signInAgain} />
+      <CloudBanner />
 
       <main className="min-h-0 flex-1 overflow-y-auto">
         {tab === 'session' && <SessionPage onGoToCheckIn={() => setTab('checkin')} />}

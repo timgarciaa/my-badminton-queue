@@ -45,15 +45,18 @@ interface CloudState {
   saved: Record<string, string>
   /** The club this device's data last went to; kept after signing out. */
   lastClubId?: string
+  /** Who was signed in when the server signed them out, to fill in on the sign-in page. */
+  lastUser?: string
 }
 
 export const useCloud = create<CloudState>()(persist(() => ({ rev: 0, saved: {} }), { name: 'mbq-cloud' }))
 
 /**
  * saved: up to date. offline: will retry. conflict: another device saved
- * since; the organizer picks which data to keep. expired: sign in again.
+ * since; the organizer picks which data to keep. (Signed out by the server:
+ * back to the sign-in page, see signInAgain.)
  */
-export type SyncStatus = 'saved' | 'saving' | 'offline' | 'conflict' | 'expired'
+export type SyncStatus = 'saved' | 'saving' | 'offline' | 'conflict'
 export const useSyncStatus = create<{ status: SyncStatus; savedAt?: number; waiting: number }>(() => ({
   status: 'saved',
   /** People asking to join the club, for its organizers to approve. */
@@ -232,7 +235,7 @@ export async function save() {
   } catch (e) {
     const status = (e as Failure).status
     if (status === 409) useSyncStatus.setState({ status: 'conflict' })
-    else if (status === 401 || status === 403) useSyncStatus.setState({ status: 'expired' })
+    else if (status === 401 || status === 403) signInAgain()
     else {
       useSyncStatus.setState({ status: 'offline' })
       scheduleSave(RETRY_MS)
@@ -406,10 +409,14 @@ export function keepThisDevice(snap: ClubSnapshot) {
   void save()
 }
 
-/** Signed out by the server (e.g. a year passed): sign in again, keeping the club's place. */
+/**
+ * Signed out by the server (e.g. a year passed, or removed from the club):
+ * back to the sign-in page. This device keeps its data and the club's place,
+ * so changes not saved yet are saved after signing in again.
+ */
 export function signInAgain() {
   clearTimeout(timer)
-  useCloud.setState({ auth: undefined })
+  useCloud.setState((s) => ({ auth: undefined, lastUser: s.auth?.username ?? s.lastUser }))
   useSyncStatus.setState({ status: 'saved' })
 }
 

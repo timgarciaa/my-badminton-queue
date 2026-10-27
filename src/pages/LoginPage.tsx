@@ -21,10 +21,12 @@ const failure = (e: unknown) =>
 /**
  * Before the app: organizers sign in, or ask for an account to create a club
  * or join one. Both wait for approval; until then signing in shows that.
- * offline: shown when the iPad is offline but has data, to run a session anyway.
  */
-export function LoginPage({ onOffline }: { onOffline?: () => void }) {
+export function LoginPage() {
   const signedInBefore = useCloud((s) => !!s.auth)
+  // Signed out by the server: this iPad still has the club's data.
+  const signedOutOf = useCloud((s) => s.club?.name)
+  const lastUser = useCloud((s) => s.lastUser)
   const [view, setView] = useState<View>('signin')
   const [pending, setPending] = useState<Pending | null>(null)
   const [choosing, setChoosing] = useState<ClubSnapshot | null>(null)
@@ -70,6 +72,8 @@ export function LoginPage({ onOffline }: { onOffline?: () => void }) {
         <div className="rounded-3xl bg-white p-6 shadow-xl">
           {view === 'signin' && (
             <SignIn
+              signedOutOf={signedOutOf}
+              lastUser={lastUser}
               busy={busy}
               error={error}
               onSubmit={(u, p) => run(async () => handle(await signIn(u, p)))}
@@ -138,14 +142,6 @@ export function LoginPage({ onOffline }: { onOffline?: () => void }) {
             </div>
           )}
         </div>
-        {onOffline && view === 'signin' && (
-          <div className="mt-4 rounded-2xl bg-white/15 p-4 text-center text-white">
-            <p className="text-sm">This iPad is offline. You can still run a session with what&apos;s on it.</p>
-            <button className="d-btn mt-2 border-white/40 bg-white/20 text-white" onClick={onOffline}>
-              Continue offline
-            </button>
-          </div>
-        )}
       </div>
       {choosing && <ChooseDataDialog snap={choosing} onDone={() => setChoosing(null)} />}
     </div>
@@ -162,17 +158,21 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
 }
 
 function SignIn({
+  signedOutOf,
+  lastUser,
   busy,
   error,
   onSubmit,
   onSignUp,
 }: {
+  signedOutOf?: string
+  lastUser?: string
   busy: boolean
   error: string | null
   onSubmit: (username: string, password: string) => void
   onSignUp: () => void
 }) {
-  const [username, setUsername] = useState('')
+  const [username, setUsername] = useState(signedOutOf ? (lastUser ?? '') : '')
   const [password, setPassword] = useState('')
   return (
     <form
@@ -183,6 +183,12 @@ function SignIn({
       }}
     >
       <h2 className="text-xl font-bold">Sign in</h2>
+      {signedOutOf && (
+        <p className="rounded-xl bg-amber-50 px-3 py-2 text-sm text-amber-900 ring-1 ring-amber-200">
+          You were signed out of <strong>{signedOutOf}</strong>. Sign in again to keep going. This iPad&apos;s data is
+          kept, and saved once you&apos;re back in.
+        </p>
+      )}
       <Field label="Username">
         <input
           className="field mt-1"

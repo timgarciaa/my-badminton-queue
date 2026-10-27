@@ -32,7 +32,6 @@ const LABELS = {
   saving: 'Saving…',
   offline: 'Offline, will save',
   conflict: 'Not saved',
-  expired: 'Not saved',
 } as const
 
 /** Next to the title while signed in: the club, and whether changes are saved. */
@@ -54,12 +53,12 @@ export function CloudStatus({ onOpen }: { onOpen: () => void }) {
   )
 }
 
-/** Shown under the header when saving needs the organizer: changed elsewhere, or signed out. */
-export function CloudBanner({ onSignIn }: { onSignIn: () => void }) {
+/** Shown under the header when the club was changed on another device, so saving needs the organizer. */
+export function CloudBanner() {
   const club = useCloud((s) => s.club)
   const status = useSyncStatus((s) => s.status)
   const [busy, setBusy] = useState(false)
-  if (!CLOUD || !club || (status !== 'conflict' && status !== 'expired')) return null
+  if (!CLOUD || !club || status !== 'conflict') return null
 
   const resolve = async (keep: 'club' | 'device') => {
     if (keep === 'device' && !confirm(`Replace ${club.name}'s data in the cloud with this iPad's?`)) return
@@ -78,28 +77,15 @@ export function CloudBanner({ onSignIn }: { onSignIn: () => void }) {
   return (
     <div role="alert" className="flex items-center gap-3 border-b border-amber-200 bg-amber-50 px-6 py-2.5 text-amber-900">
       <CloudIcon className="h-5 w-5 shrink-0" />
-      {status === 'conflict' ? (
-        <>
-          <span className="flex-1">
-            <strong>{club.name}</strong> was changed on another device, so this iPad&apos;s changes aren&apos;t saved.
-          </span>
-          <button className="d-btn d-btn-sm" disabled={busy} onClick={() => resolve('club')}>
-            Use the club&apos;s data
-          </button>
-          <button className="d-btn d-btn-sm d-btn-warning" disabled={busy} onClick={() => resolve('device')}>
-            Keep this iPad&apos;s
-          </button>
-        </>
-      ) : (
-        <>
-          <span className="flex-1">
-            Signed out of <strong>{club.name}</strong>. Sign in again to keep saving.
-          </span>
-          <button className="d-btn d-btn-sm d-btn-warning" onClick={onSignIn}>
-            Sign in
-          </button>
-        </>
-      )}
+      <span className="flex-1">
+        <strong>{club.name}</strong> was changed on another device, so this iPad&apos;s changes aren&apos;t saved.
+      </span>
+      <button className="d-btn d-btn-sm" disabled={busy} onClick={() => resolve('club')}>
+        Use the club&apos;s data
+      </button>
+      <button className="d-btn d-btn-sm d-btn-warning" disabled={busy} onClick={() => resolve('device')}>
+        Keep this iPad&apos;s
+      </button>
     </div>
   )
 }
