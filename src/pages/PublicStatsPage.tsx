@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { PlayerStats } from '../components/PlayerStats'
 import { SessionSelect } from '../components/SessionSelect'
 import { EmptyState } from '../components/ui'
-import { fetchPublicStats, type PublicStats } from '../lib/publicStats'
+import { fetchPublicStats, findPlayer, type PublicStats } from '../lib/publicStats'
 import { Roster } from '../lib/roster'
 import { useScope } from '../lib/scope'
 import { newSession } from '../store/useStore'
@@ -10,10 +10,11 @@ import { newSession } from '../store/useStore'
 type Load = { state: 'loading' } | { state: 'missing' } | { state: 'failed' } | { state: 'ready'; data: PublicStats }
 
 /**
- * A club's player stats for anyone with the link (…/my-badminton-queue/<name>):
- * read-only, no sign-in, and separate from the app (nothing on this device changes).
+ * A club's player stats for anyone with the link (…/my-badminton-queue/<name>,
+ * or …/<name>/<player> to open on a player): read-only, no sign-in, and
+ * separate from the app (nothing on this device changes).
  */
-export function PublicStatsPage({ slug }: { slug: string }) {
+export function PublicStatsPage({ slug, player }: { slug: string; player?: string }) {
   const [load, setLoad] = useState<Load>({ state: 'loading' })
   const [attempt, setAttempt] = useState(0)
 
@@ -64,22 +65,26 @@ export function PublicStatsPage({ slug }: { slug: string }) {
           </button>
         </div>
       )}
-      {load.state === 'ready' && <Stats data={load.data} />}
+      {load.state === 'ready' && <Stats data={load.data} player={player} />}
     </div>
   )
 }
 
-function Stats({ data }: { data: PublicStats }) {
+function Stats({ data, player }: { data: PublicStats; player?: string }) {
   const players = useMemo(() => new Map(data.players.map((p) => [p.id, p])), [data.players])
   const empty = useMemo(() => newSession(), [])
   const session = data.session ?? empty
   const { scope, setScope, all, recent, sessions, span, label } = useScope(session, data.history)
-  const [chosen, setChosen] = useState<string | null>(null)
+  const wanted = useMemo(() => (player ? findPlayer(data.players, player) : undefined), [data.players, player])
+  const [chosen, setChosen] = useState<string | null>(wanted?.id ?? null)
 
   return (
     <Roster.Provider value={players}>
       <div className="flex flex-col gap-4 py-4 lg:min-h-0 lg:flex-1 lg:gap-5 lg:py-5">
-        <div className="px-4 lg:px-5">
+        <div className="space-y-2 px-4 lg:px-5">
+          {player && !wanted && (
+            <p className="text-sm text-amber-700">No player called “{player}” here. Pick one below.</p>
+          )}
           <SessionSelect
             className="w-full lg:w-72"
             scope={scope}

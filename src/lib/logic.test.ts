@@ -4,7 +4,7 @@ import { bumpedPlayers, meetCounts, metPairs, pairKey, partnerCounts, splitTeams
 import { costSummary, courtBooking, money, sessionStarted, shuttleCount, shuttlesInStock } from './cost'
 import type { Help } from './balance'
 import { parseNames } from './importNames'
-import { publicSlug } from './publicStats'
+import { findPlayer, publicPath } from './publicStats'
 import { matchSkill, planGames, winnersStayGame } from './plan'
 import { arrivals, bestRecord, scoreLeader, checkinPlaces, checkinStandings, duoRecords, form, mateRecords, mostOften, gameExtremes, gameTime, helpFrom, ordinal, places, playedGames, sessionsWithin, standings, playerRecords, rivalries, streaks, winRate, worstRecord } from './stats'
 import { dequeue, enqueue, move, nextFour, placeByArrival, pushFront, swap } from './queue'
@@ -1324,16 +1324,35 @@ describe('session dates', () => {
 
 describe('public stats page address', () => {
   const base = '/my-badminton-queue/'
-  it('takes the link name after the app path', () => {
-    expect(publicSlug('/my-badminton-queue/tim', base)).toBe('tim')
-    expect(publicSlug('/my-badminton-queue/serve-n-shout/', base)).toBe('serve-n-shout')
-    expect(publicSlug('/my-badminton-queue/TIM', base)).toBe('tim')
+  it('takes the club link name after the app path, and a player after that', () => {
+    expect(publicPath('/my-badminton-queue/tim', base)).toEqual({ slug: 'tim' })
+    expect(publicPath('/my-badminton-queue/serve-n-shout/', base)).toEqual({ slug: 'serve-n-shout' })
+    expect(publicPath('/my-badminton-queue/TIM', base)).toEqual({ slug: 'tim' })
+    expect(publicPath('/my-badminton-queue/serve-n-shout/tim', base)).toEqual({ slug: 'serve-n-shout', player: 'tim' })
+    expect(publicPath('/my-badminton-queue/serve-n-shout/Tim%20Garcia/', base)).toEqual({ slug: 'serve-n-shout', player: 'tim garcia' })
   })
   it("isn't the app itself, its files, or another page", () => {
-    expect(publicSlug('/my-badminton-queue/', base)).toBeUndefined()
-    expect(publicSlug('/my-badminton-queue/index.html', base)).toBeUndefined()
-    expect(publicSlug('/my-badminton-queue/assets/index.js', base)).toBeUndefined()
-    expect(publicSlug('/my-badminton-queue/a', base)).toBeUndefined()
-    expect(publicSlug('/other/tim', base)).toBeUndefined()
+    expect(publicPath('/my-badminton-queue/', base)).toBeUndefined()
+    expect(publicPath('/my-badminton-queue/index.html', base)).toBeUndefined()
+    expect(publicPath('/my-badminton-queue/assets/index.js', base)).toBeUndefined()
+    expect(publicPath('/my-badminton-queue/a', base)).toBeUndefined()
+    expect(publicPath('/my-badminton-queue/club/tim/more', base)).toBeUndefined()
+    expect(publicPath('/other/tim', base)).toBeUndefined()
+  })
+  it('finds a player by full name, or by first name when only one has it', () => {
+    const players = [
+      { id: '1', name: 'Tim Garcia' },
+      { id: '2', name: 'Ana Reyes' },
+      { id: '3', name: 'Ana Cruz' },
+      { id: '4', name: 'Ninong Aries' },
+    ]
+    expect(findPlayer(players, 'tim')?.id).toBe('1')
+    expect(findPlayer(players, 'tim garcia')?.id).toBe('1')
+    expect(findPlayer(players, 'tim-garcia')?.id).toBe('1')
+    expect(findPlayer(players, 'ana reyes')?.id).toBe('2')
+    // Two Anas: the first name alone doesn't say which.
+    expect(findPlayer(players, 'ana')).toBeUndefined()
+    expect(findPlayer(players, 'ninong-aries')?.id).toBe('4')
+    expect(findPlayer(players, 'bob')).toBeUndefined()
   })
 })

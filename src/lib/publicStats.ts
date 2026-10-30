@@ -19,11 +19,38 @@ export interface PublicStats {
   history: Session[]
 }
 
-/** The link name in a public stats page's address (…/my-badminton-queue/<name>), if this is one. */
-export function publicSlug(pathname: string, base: string): string | undefined {
+const SLUG = /^[a-z0-9][a-z0-9-]{1,28}[a-z0-9]$/
+
+/**
+ * A public stats page's address: …/my-badminton-queue/<club link name>, or
+ * …/<club link name>/<player> to open on that player. Undefined for anything else.
+ */
+export function publicPath(pathname: string, base: string): { slug: string; player?: string } | undefined {
   if (!pathname.startsWith(base)) return undefined
-  const rest = pathname.slice(base.length).replace(/\/$/, '').toLowerCase()
-  return /^[a-z0-9][a-z0-9-]{1,28}[a-z0-9]$/.test(rest) ? rest : undefined
+  const [slug, player, ...more] = pathname.slice(base.length).replace(/\/$/, '').toLowerCase().split('/')
+  // assets/ holds the app's own files (and is never a club's link name).
+  if (!SLUG.test(slug) || slug === 'assets' || more.length) return undefined
+  const name = player && decodeURIComponent(player).trim()
+  return name ? { slug, player: name } : { slug }
+}
+
+/** A name as it's written in an address: "Tim Garcia" → tim-garcia. */
+const urlName = (name: string) =>
+  name
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, '-')
+    .replace(/^-+|-+$/g, '')
+
+/**
+ * The player an address names: by full name (tim-garcia), or by first name
+ * (tim) when only one player has it.
+ */
+export function findPlayer(players: PublicPlayer[], wanted: string): PublicPlayer | undefined {
+  const want = urlName(wanted)
+  const full = players.find((p) => urlName(p.name) === want)
+  if (full) return full
+  const first = players.filter((p) => urlName(p.name).split('-')[0] === want)
+  return first.length === 1 ? first[0] : undefined
 }
 
 /** Filled out as a full session, so the stats code can use it as it is. */
