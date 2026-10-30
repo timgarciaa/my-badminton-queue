@@ -20,7 +20,7 @@ import {
   type MateRecord,
   type PlayerRecord,
 } from '../lib/stats'
-import { usePlayerMap } from '../store/useStore'
+import { useRoster, type PublicPlayer } from '../lib/roster'
 import { SKILL_LABELS, type Player, type Session } from '../types'
 import { EmptyState, PlayerTags } from './ui'
 
@@ -50,7 +50,7 @@ export function PlayerStats({
   chosen: string | null
   onChoose: (id: string) => void
 }) {
-  const players = usePlayerMap()
+  const players = useRoster()
   const [query, setQuery] = useState('')
   const ranked = standings(playedGames(sessions)).filter((s) => players.has(s.id))
   const place = places(ranked)
@@ -62,8 +62,21 @@ export function PlayerStats({
     .filter((r) => !q || r.player.name.toLowerCase().includes(q))
 
   return (
-    <div className="grid min-h-0 flex-1 grid-cols-[15rem_1fr] gap-5 px-5 pb-5">
-      <aside className="flex min-h-0 flex-col overflow-hidden rounded-2xl bg-base-100 shadow-sm ring-1 ring-slate-200">
+    <div className="space-y-4 px-4 pb-6 lg:grid lg:min-h-0 lg:flex-1 lg:grid-cols-[15rem_1fr] lg:gap-5 lg:space-y-0 lg:px-5 lg:pb-5">
+      {/* Phones: a list to pick from instead of the side panel. */}
+      <select
+        className="d-select w-full font-semibold lg:hidden"
+        aria-label="Player"
+        value={ranked[i].id}
+        onChange={(e) => onChoose(e.target.value)}
+      >
+        {ranked.map((r, n) => (
+          <option key={r.id} value={r.id}>
+            {ordinal(place[n])} · {players.get(r.id)!.name} · {record(r)}
+          </option>
+        ))}
+      </select>
+      <aside className="hidden min-h-0 flex-col overflow-hidden rounded-2xl bg-base-100 shadow-sm ring-1 ring-slate-200 lg:flex">
         <div className="border-b border-slate-100 p-2">
           <input
             className="field h-11"
@@ -98,8 +111,8 @@ export function PlayerStats({
           {shown.length === 0 && <li className="p-3 text-sm text-slate-500">No one called “{query.trim()}”.</li>}
         </ul>
       </aside>
-      {/* Scrolls on its own; the margin keeps the cards' shadows from being cut off. */}
-      <div className="-mx-3 min-h-0 overflow-y-auto px-3 pb-2">
+      {/* Scrolls on its own beside the list; the margin keeps the cards' shadows from being cut off. */}
+      <div className="lg:-mx-3 lg:min-h-0 lg:overflow-y-auto lg:px-3 lg:pb-2">
         <Profile
           key={ranked[i].id}
           player={players.get(ranked[i].id)!}
@@ -124,7 +137,7 @@ function Profile({
   showDate,
   onChoose,
 }: {
-  player: Player
+  player: Player | PublicPlayer
   place: number
   of: number
   sessions: Session[]
@@ -132,7 +145,7 @@ function Profile({
   showDate: boolean
   onChoose: (id: string) => void
 }) {
-  const players = usePlayerMap()
+  const players = useRoster()
   const [allGames, setAllGames] = useState(false)
   const id = player.id
   const name = (other: string) => players.get(other)?.name ?? 'Removed player'
@@ -159,22 +172,24 @@ function Profile({
 
   return (
     <div className="space-y-5">
-      <section className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-teal-800 via-teal-600 to-emerald-500 p-6 text-white shadow-lg">
+      <section className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-teal-800 via-teal-600 to-emerald-500 p-5 text-white shadow-lg sm:p-6">
         {/* Decoration: rings like a court's centre circle. */}
         <span aria-hidden className="absolute -top-16 -right-10 h-64 w-64 rounded-full border-[28px] border-white/10" />
         <span aria-hidden className="absolute -bottom-24 left-1/3 h-56 w-56 rounded-full bg-white/5" />
         <div className="relative flex items-center gap-5">
           <div className="min-w-0 flex-1">
             <div className="text-sm font-bold tracking-wide text-teal-100 uppercase">{scope}</div>
-            <h3 className="truncate text-4xl font-black tracking-tight">{player.name}</h3>
-            <div className="mt-1.5 flex items-center gap-2 text-sm font-semibold text-teal-50">
-              <PlayerTags player={player} />
-              {SKILL_LABELS[player.skill]}
-            </div>
+            <h3 className="truncate text-3xl font-black tracking-tight sm:text-4xl">{player.name}</h3>
+            {'skill' in player && (
+              <div className="mt-1.5 flex items-center gap-2 text-sm font-semibold text-teal-50">
+                <PlayerTags player={player} />
+                {SKILL_LABELS[player.skill]}
+              </div>
+            )}
             <div className="mt-4 text-xs font-bold tracking-wide text-teal-100 uppercase">
               Form {recent.length > 0 && <span className="font-semibold normal-case">· last {recent.length}, newest on the right</span>}
             </div>
-            <div className="mt-1 flex gap-1.5">
+            <div className="mt-1 flex flex-wrap gap-1.5">
               {recent.length === 0 && <span className="text-sm text-teal-50">No results yet</span>}
               {recent.map((r, n) => (
                 <span
@@ -190,7 +205,7 @@ function Profile({
           </div>
           <WinRing rate={rate} />
         </div>
-        <div className="relative mt-5 grid grid-cols-4 gap-3">
+        <div className="relative mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
           <HeroTile label="Place" value={ordinal(place)} detail={`of ${of}`} />
           <HeroTile label="Record" value={record(rec)} detail={rec.played > rec.wins + rec.losses ? `${rec.played - rec.wins - rec.losses} no result` : 'won–lost'} />
           <HeroTile label="Games" value={rec.played} detail={`in ${attended} ${attended === 1 ? 'session' : 'sessions'}`} />
@@ -198,7 +213,7 @@ function Profile({
         </div>
       </section>
 
-      <div className="grid grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <Tile label="Best run" value={run.wins ? `W${run.wins}` : '–'} tone="text-emerald-700" detail="wins in a row" />
         <Tile label="Worst run" value={run.losses ? `L${run.losses}` : '–'} tone="text-rose-600" detail="losses in a row" />
         <Tile
@@ -221,7 +236,7 @@ function Profile({
         />
       </div>
 
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid gap-3 sm:grid-cols-2">
         <Highlight icon="M7 11a4 4 0 100-8 4 4 0 000 8zM17 11a4 4 0 100-8 4 4 0 000 8zM2 21v-1a5 5 0 0110 0v1M12 21v-1a5 5 0 0110 0v1" tone="bg-emerald-50 text-emerald-800 ring-emerald-200" title="Best partner" mate={bestPartner} name={name} onChoose={onChoose}>
           {bestPartner && `${record(bestPartner)} together · ${pct(bestPartner)}`}
         </Highlight>
@@ -236,7 +251,7 @@ function Profile({
         </Highlight>
       </div>
 
-      <div className="grid grid-cols-2 items-start gap-5">
+      <div className="grid items-start gap-5 sm:grid-cols-2">
         <MateTable title="Partners" rows={partners} name={name} onChoose={onChoose} />
         <MateTable title="Opponents" rows={opponents} name={name} onChoose={onChoose} />
       </div>
@@ -298,7 +313,7 @@ function WinRing({ rate }: { rate: number | null }) {
   const r = 52
   const length = 2 * Math.PI * r
   return (
-    <div className="relative h-36 w-36 shrink-0">
+    <div className="relative h-28 w-28 shrink-0 sm:h-36 sm:w-36">
       <svg viewBox="0 0 120 120" className="h-full w-full -rotate-90" aria-hidden>
         <circle cx="60" cy="60" r={r} fill="none" stroke="rgb(255 255 255 / 0.2)" strokeWidth="12" />
         {rate !== null && (
@@ -306,7 +321,7 @@ function WinRing({ rate }: { rate: number | null }) {
         )}
       </svg>
       <div className="absolute inset-0 flex flex-col items-center justify-center">
-        <span className="text-4xl font-black tabular-nums">{rate === null ? '–' : `${Math.round(rate * 100)}%`}</span>
+        <span className="text-3xl font-black tabular-nums sm:text-4xl">{rate === null ? '–' : `${Math.round(rate * 100)}%`}</span>
         <span className="text-xs font-bold tracking-wide text-teal-100 uppercase">Win rate</span>
       </div>
     </div>
@@ -383,7 +398,7 @@ function MateTable({
   name: (id: string) => string
   onChoose: (id: string) => void
 }) {
-  const players = usePlayerMap()
+  const players = useRoster()
   return (
     <section className="d-card d-card-border overflow-hidden bg-base-100 shadow-sm">
       <div className="flex items-baseline justify-between border-b border-slate-100 px-4 py-3">

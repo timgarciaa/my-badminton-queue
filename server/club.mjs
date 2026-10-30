@@ -18,8 +18,11 @@
 //   POST /club/save       { baseRev, put: { [id]: json }, remove: [id] } → { rev }, or 409 if behind
 //   GET  /club/members    → { members: [{ username, approved, requestedAt }] }
 //   POST /club/members    { username, approve: true } approves; approve: false declines or removes
+//   GET  /club/link       → { slug }: the club's public stats page link name
+//   POST /club/link       { slug } → { slug }, or 409 if another club has it
+//   GET  /public/<slug>   → the club's player stats, for its public page (no sign-in)
 //
-// Requests other than /signup carry the organizer's sign-in token
+// Requests other than /signup and /public carry the organizer's sign-in token
 // (Authorization: Bearer ...).
 import { randomInt } from 'node:crypto'
 
@@ -31,6 +34,24 @@ export const MAX_ACTIONS = 90
 export const MAX_PENDING = 20
 const MAX_DOC = 350_000
 const USERNAME = /^[a-z0-9._-]{3,32}$/
+/** Public page link names: 3 to 30 lowercase letters, digits and inner dashes. */
+export const SLUG = /^[a-z0-9][a-z0-9-]{1,28}[a-z0-9]$/
+/** Not link names: the app's own files and paths sit next to them. */
+const RESERVED = new Set(['assets', 'index', 'public', 'club', 'signup', 'admin', 'api', 'app', 'login', 'settings', 'stats', 'tension-tester'])
+/** Link name from a club's name: "Serve N' Shout" → serve-n-shout. */
+export const slugOf = (name) =>
+  String(name)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 30)
+    .replace(/-+$/, '')
+const slugError = (slug) =>
+  !SLUG.test(slug) || slug.includes('--')
+    ? 'Use 3 to 30 lowercase letters, numbers or dashes.'
+    : RESERVED.has(slug)
+      ? 'That name is taken.'
+      : null
 const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
 
 const json = (status, body) => ({ status, body })
@@ -71,6 +92,59 @@ export function createClubApi(db, accounts, verify, now = () => Date.now()) {
     // Clubs made before join codes get one the first time it's needed.
     if (!club.code) club = { ...club, code: await db.setCode(member.clubId, joinCode()) }
     return { username, clubId: member.clubId, club }
+  }
+
+  /** The club's link name, given one from its name (or a free variant) the first time. */
+  const linkOf = async (id, club) => {
+    if (club.slug) return club.slug
+    const base = slugOf(club.name)
+    const start = slugError(base) ? 'club' : base
+    for (let n = 1; n <= 20; n++) {
+      const slug = n === 1 && start !== 'club' ? start : `${start.slice(0, 26)}-${n === 1 ? randomInt(100, 1000) : n}`
+      if (!slugError(slug) && (await db.setSlug(id, slug, null))) return slug
+    }
+    throw new Error('no free link name')
+  }
+
+  /** What a club's public page shows: names, games and check-in times; no money, payments or PINs. */
+  async function publicStats(slug) {
+    const id = SLUG.test(slug) ? await db.clubBySlug(slug) : null
+    const club = id && (await db.club(id))
+    if (!club || club.approved === false) return json(404, { error: 'not found' })
+    const docs = await db.docs(id)
+    const parse = (d) => {
+      try {
+        return JSON.parse(d)
+      } catch {
+        return null
+      }
+    }
+    const players = (parse(docs.players) ?? []).map((p) => ({ id: p.id, name: p.name }))
+    const session = (s) =>
+      s && {
+        id: s.id,
+        date: s.date,
+        status: s.status,
+        attendees: (s.attendees ?? []).map((a) => ({ playerId: a.playerId, checkedInAt: a.checkedInAt })),
+        games: (s.games ?? []).map((g) => ({
+          id: g.id,
+          number: g.number,
+          court: g.court,
+          teamA: g.teamA,
+          teamB: g.teamB,
+          startedAt: g.startedAt,
+          endedAt: g.endedAt,
+          winner: g.winner,
+          score: g.score,
+          outOfHours: g.outOfHours,
+        })),
+      }
+    const history = Object.keys(docs)
+      .filter((d) => d.startsWith('h#'))
+      .map((d) => session(parse(docs[d])))
+      .filter(Boolean)
+      .sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0))
+    return json(200, { club: { name: club.name }, players, session: session(parse(docs.session)) ?? null, history })
   }
 
   async function signup(body) {
@@ -119,6 +193,7 @@ export function createClubApi(db, accounts, verify, now = () => Date.now()) {
 
   return async function handle({ method, path, token, body }) {
     if (method === 'POST' && path === '/signup') return signup(body)
+    if (method === 'GET' && path.startsWith('/public/')) return publicStats(path.slice(8))
 
     const me = await organizer(token)
     if (me.error) return me.error
@@ -148,6 +223,17 @@ export function createClubApi(db, accounts, verify, now = () => Date.now()) {
       }
       const rev = await db.save(id, baseRev, put, remove)
       return rev === null ? json(409, { error: 'changed on another device' }) : json(200, { rev })
+    }
+
+    if (method === 'GET' && path === '/club/link') return json(200, { slug: await linkOf(id, club) })
+
+    if (method === 'POST' && path === '/club/link') {
+      const slug = clean(body?.slug, 40).toLowerCase()
+      const error = slugError(slug)
+      if (error) return json(400, { error })
+      const current = await linkOf(id, club)
+      if (slug !== current && !(await db.setSlug(id, slug, current))) return json(409, { error: 'That name is taken.' })
+      return json(200, { slug })
     }
 
     if (method === 'GET' && path === '/club/members') {
@@ -182,8 +268,10 @@ export function memoryClubDb(clubs = {}) {
   const members = new Map()
   const users = new Map()
   const codes = new Map()
+  const slugs = new Map()
   for (const [id, c] of Object.entries(clubs)) {
-    meta.set(id, { name: c.name, rev: 0, code: c.code, approved: c.approved })
+    meta.set(id, { name: c.name, rev: 0, code: c.code, approved: c.approved, slug: c.slug })
+    if (c.slug) slugs.set(c.slug, id)
     docs.set(id, {})
     members.set(id, new Map())
     if (c.code) codes.set(c.code, id)
@@ -234,6 +322,15 @@ export function memoryClubDb(clubs = {}) {
     /** For the dev server: what the app admin does with server/club.sh. */
     approveClub: async (id) => {
       meta.get(id).approved = true
+    },
+    clubBySlug: async (slug) => slugs.get(slug) ?? null,
+    /** Gives a club a public link name, freeing its old one (from); false if another club has it. */
+    setSlug: async (id, slug, from) => {
+      if (slugs.has(slug) && slugs.get(slug) !== id) return false
+      if (from && slugs.get(from) === id) slugs.delete(from)
+      slugs.set(slug, id)
+      meta.get(id).slug = slug
+      return true
     },
     /** Gives a club a join code if it has none; returns the club's code. */
     setCode: async (id, code) => {

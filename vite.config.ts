@@ -1,4 +1,6 @@
 /// <reference types="vitest/config" />
+import { copyFileSync } from 'node:fs'
+import { join } from 'node:path'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import { defineConfig } from 'vite'
@@ -9,6 +11,13 @@ export default defineConfig({
   base: process.env.BASE_PATH ?? '/',
   plugins: [
     react(),
+    // GitHub Pages has no fallback for paths like /my-badminton-queue/<club link>:
+    // it serves 404.html, so that's the app too (it routes on the path).
+    {
+      name: 'pages-404',
+      apply: 'build',
+      writeBundle: ({ dir }) => copyFileSync(join(dir!, 'index.html'), join(dir!, '404.html')),
+    },
     tailwindcss(),
     VitePWA({
       registerType: 'autoUpdate',

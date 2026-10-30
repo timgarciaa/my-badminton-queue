@@ -255,6 +255,13 @@ export interface Member {
   requestedAt: number
 }
 
+/** The club's public stats page link name (given one from the club's name the first time). */
+export const fetchLink = () => api<{ slug: string }>('GET', '/club/link').then((r) => r.slug)
+/** Change it; fails with the reason (taken, or not a valid name). */
+export const saveLink = (slug: string) => api<{ slug: string }>('POST', '/club/link', { slug }).then((r) => r.slug)
+/** The public stats page's address for a link name. */
+export const publicLink = (slug: string) => `${location.origin}${import.meta.env.BASE_URL}${slug}`
+
 export const fetchMembers = () => api<{ members: Member[] }>('GET', '/club/members').then((r) => r.members)
 
 /** Approve someone asking to join, or decline them (or remove an organizer). */

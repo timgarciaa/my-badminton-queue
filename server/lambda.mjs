@@ -69,6 +69,7 @@ const db = {
 //   { pk: club#<id>, sk: member#<username>, approved, requestedAt }
 //   { pk: user#<username>, sk: user, clubId }      which club someone organizes
 //   { pk: code#<code>, sk: code, clubId }          join codes
+//   { pk: slug#<slug>, sk: slug, clubId }          public stats page link names
 const Clubs = process.env.CLUB_TABLE
 const get = async (pk, sk) => (await doc.send(new GetCommand({ TableName: Clubs, Key: { pk, sk } }))).Item
 const query = async (pk, prefix) => {
@@ -96,7 +97,7 @@ const conditionFailed = (e) =>
 export const clubDb = {
   club: async (id) => {
     const item = await get(`club#${id}`, 'meta')
-    return item ? { name: item.name, rev: item.rev, code: item.code, approved: item.approved } : null
+    return item ? { name: item.name, rev: item.rev, code: item.code, approved: item.approved, slug: item.slug } : null
   },
   docs: async (id) => Object.fromEntries((await query(`club#${id}`, 'doc#')).map((i) => [i.sk.slice(4), i.data])),
   save: async (id, baseRev, put, remove) => {
@@ -215,6 +216,49 @@ export const clubDb = {
     } while (ExclusiveStartKey)
     return count
   },
+  clubBySlug: async (slug) => (await get(`slug#${slug}`, 'slug'))?.clubId ?? null,
+  setSlug: async (id, slug, from) => {
+    try {
+      await transact([
+        {
+          Put: {
+            TableName: Clubs,
+            Item: { pk: `slug#${slug}`, sk: 'slug', clubId: id },
+            ConditionExpression: 'attribute_not_exists(#pk) OR #clubId = :id',
+            ExpressionAttributeNames: { '#pk': 'pk', '#clubId': 'clubId' },
+            ExpressionAttributeValues: { ':id': id },
+          },
+        },
+        {
+          Update: {
+            TableName: Clubs,
+            Key: { pk: `club#${id}`, sk: 'meta' },
+            UpdateExpression: 'SET #slug = :slug',
+            ConditionExpression: 'attribute_exists(#pk)',
+            ExpressionAttributeNames: { '#slug': 'slug', '#pk': 'pk' },
+            ExpressionAttributeValues: { ':slug': slug },
+          },
+        },
+        ...(from && from !== slug
+          ? [
+              {
+                Delete: {
+                  TableName: Clubs,
+                  Key: { pk: `slug#${from}`, sk: 'slug' },
+                  ConditionExpression: '#clubId = :id',
+                  ExpressionAttributeNames: { '#clubId': 'clubId' },
+                  ExpressionAttributeValues: { ':id': id },
+                },
+              },
+            ]
+          : []),
+      ])
+      return true
+    } catch (e) {
+      if (conditionFailed(e)) return false
+      throw e
+    }
+  },
   setCode: async (id, code) => {
     try {
       await transact([
@@ -288,8 +332,10 @@ export async function handler(event) {
   }
   const method = event.requestContext.http.method
   const path = event.rawPath
-  const res = path.startsWith('/club') || path === '/signup'
+  const res = path.startsWith('/club') || path === '/signup' || path.startsWith('/public/')
     ? await handleClub({ method, path, token: event.headers?.authorization?.replace(/^Bearer /, ''), body })
     : await handle({ method, path, key: event.headers?.['x-key'], pin: event.headers?.['x-pin'], body })
-  return { statusCode: res.status, headers: { 'content-type': 'application/json' }, body: JSON.stringify(res.body) }
+  // Public pages can be cached briefly by the browser; everything else is per organizer.
+  const cache = path.startsWith('/public/') && res.status === 200 ? { 'cache-control': 'public, max-age=60' } : {}
+  return { statusCode: res.status, headers: { 'content-type': 'application/json', ...cache }, body: JSON.stringify(res.body) }
 }

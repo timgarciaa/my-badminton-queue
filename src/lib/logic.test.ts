@@ -4,6 +4,7 @@ import { bumpedPlayers, meetCounts, metPairs, pairKey, partnerCounts, splitTeams
 import { costSummary, courtBooking, money, sessionStarted, shuttleCount, shuttlesInStock } from './cost'
 import type { Help } from './balance'
 import { parseNames } from './importNames'
+import { publicSlug } from './publicStats'
 import { matchSkill, planGames, winnersStayGame } from './plan'
 import { arrivals, bestRecord, scoreLeader, checkinPlaces, checkinStandings, duoRecords, form, mateRecords, mostOften, gameExtremes, gameTime, helpFrom, ordinal, places, playedGames, sessionsWithin, standings, playerRecords, rivalries, streaks, winRate, worstRecord } from './stats'
 import { dequeue, enqueue, move, nextFour, placeByArrival, pushFront, swap } from './queue'
@@ -1318,5 +1319,21 @@ describe('session dates', () => {
     // Data downloaded from the club is repaired too.
     useStore.getState().importData({ players: [], history: [stale] })
     expect(useStore.getState().history[0].date).toBe('2026-10-30')
+  })
+})
+
+describe('public stats page address', () => {
+  const base = '/my-badminton-queue/'
+  it('takes the link name after the app path', () => {
+    expect(publicSlug('/my-badminton-queue/tim', base)).toBe('tim')
+    expect(publicSlug('/my-badminton-queue/serve-n-shout/', base)).toBe('serve-n-shout')
+    expect(publicSlug('/my-badminton-queue/TIM', base)).toBe('tim')
+  })
+  it("isn't the app itself, its files, or another page", () => {
+    expect(publicSlug('/my-badminton-queue/', base)).toBeUndefined()
+    expect(publicSlug('/my-badminton-queue/index.html', base)).toBeUndefined()
+    expect(publicSlug('/my-badminton-queue/assets/index.js', base)).toBeUndefined()
+    expect(publicSlug('/my-badminton-queue/a', base)).toBeUndefined()
+    expect(publicSlug('/other/tim', base)).toBeUndefined()
   })
 })

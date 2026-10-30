@@ -66,7 +66,7 @@ createServer(async (req, res) => {
       ? devAuth(body)
       : path === '/dev-approve-club'
         ? await approveClub(body)
-        : path.startsWith('/club') || path === '/signup'
+        : path.startsWith('/club') || path === '/signup' || path.startsWith('/public/')
         ? await handleClub({ method: req.method, path, token: req.headers.authorization?.replace(/^Bearer /, ''), body })
         : await handle({ method: req.method, path, key: req.headers['x-key'], pin: req.headers['x-pin'], body })
   res.writeHead(out.status, { 'content-type': 'application/json' }).end(JSON.stringify(out.body))

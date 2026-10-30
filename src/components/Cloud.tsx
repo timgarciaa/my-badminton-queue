@@ -4,10 +4,13 @@ import {
   type ClubSnapshot,
   decideMember,
   fetchClub,
+  fetchLink,
   fetchMembers,
   fromDocs,
   keepThisDevice,
   type Member,
+  publicLink,
+  saveLink,
   signOut,
   takeClubData,
   useCloud,
@@ -122,6 +125,7 @@ export function ClubAccountCard() {
             </p>
           </div>
         )}
+        <PublicStatsLink />
         <Organizers me={auth.username} />
         <button
           className="d-btn d-btn-sm self-start"
@@ -132,6 +136,111 @@ export function ClubAccountCard() {
           Sign out
         </button>
       </div>
+    </div>
+  )
+}
+
+/** The club's public stats page: its link to share, and changing its name. */
+function PublicStatsLink() {
+  const [slug, setSlug] = useState<string | null>(null)
+  const [failed, setFailed] = useState(false)
+  const [editing, setEditing] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [copied, setCopied] = useState(false)
+
+  useEffect(() => {
+    fetchLink().then(setSlug, () => setFailed(true))
+  }, [])
+
+  if (failed) return <p className="text-sm text-slate-500">The public stats link shows here when the iPad is online.</p>
+  if (!slug) return null
+  const link = publicLink(slug)
+
+  const share = async () => {
+    if (navigator.share) {
+      await navigator.share({ title: 'Player stats', url: link }).catch(() => {})
+    } else {
+      await navigator.clipboard?.writeText(link)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    }
+  }
+
+  const save = async () => {
+    if (editing === null) return
+    setBusy(true)
+    setError(null)
+    try {
+      setSlug(await saveLink(editing))
+      setEditing(null)
+    } catch (e) {
+      setError(e instanceof TypeError ? "Couldn't reach the club. Check the internet connection." : (e as Error).message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="rounded-xl bg-slate-50 px-3 py-2 ring-1 ring-slate-200">
+      <div className="text-xs font-bold tracking-wide text-slate-500 uppercase">Public stats page</div>
+      {editing === null ? (
+        <>
+          <a className="block truncate font-semibold text-teal-700 underline select-text" href={link} target="_blank" rel="noreferrer">
+            {link.replace(/^https?:\/\//, '')}
+          </a>
+          <div className="mt-1.5 flex gap-2">
+            <button className="d-btn d-btn-sm d-btn-primary d-btn-soft" onClick={share}>
+              {copied ? 'Copied' : 'Share link'}
+            </button>
+            <button className="d-btn d-btn-sm d-btn-ghost" onClick={() => setEditing(slug)}>
+              Change
+            </button>
+          </div>
+        </>
+      ) : (
+        <form
+          className="mt-1 space-y-1.5"
+          onSubmit={(e) => {
+            e.preventDefault()
+            void save()
+          }}
+        >
+          <label className="flex items-center gap-1 text-sm text-slate-500">
+            <span className="shrink-0">…{import.meta.env.BASE_URL}</span>
+            <input
+              className="field h-10 min-w-0 py-1 text-base"
+              aria-label="Link name"
+              autoCapitalize="none"
+              autoCorrect="off"
+              maxLength={30}
+              value={editing}
+              onChange={(e) => setEditing(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ''))}
+            />
+          </label>
+          {error && <p className="text-sm font-semibold text-rose-700">{error}</p>}
+          <div className="flex gap-2">
+            <button className="d-btn d-btn-sm d-btn-primary" disabled={busy || editing.length < 3}>
+              Save
+            </button>
+            <button
+              type="button"
+              className="d-btn d-btn-sm d-btn-ghost"
+              onClick={() => {
+                setEditing(null)
+                setError(null)
+              }}
+            >
+              Cancel
+            </button>
+          </div>
+          <p className="text-xs text-slate-500">3 to 30 letters, numbers or dashes. The old link stops working.</p>
+        </form>
+      )}
+      <p className="mt-1.5 text-xs text-slate-500">
+        Anyone with the link can see players&apos; names, records and games, without signing in. Skill levels, costs
+        and payments aren&apos;t shown.
+      </p>
     </div>
   )
 }

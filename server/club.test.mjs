@@ -1,7 +1,7 @@
 import { generateKeyPairSync, sign } from 'node:crypto'
 import { describe, expect, it, vi } from 'vitest'
 import { cognitoVerifier, devTokens } from './auth.mjs'
-import { createClubApi, MAX_PENDING, memoryAccounts, memoryClubDb } from './club.mjs'
+import { createClubApi, MAX_PENDING, memoryAccounts, memoryClubDb, slugOf } from './club.mjs'
 
 const setup = () => {
   let t = 1000
@@ -158,5 +158,92 @@ describe('cognito tokens', () => {
     const forged = Buffer.from(JSON.stringify({ ...good, 'custom:club': 'c2' })).toString('base64url')
     expect(await verify(`${h}.${forged}.${s}`)).toBeNull()
     vi.unstubAllGlobals()
+  })
+})
+
+describe('public stats page', () => {
+  const saved = (call, token) => {
+    const players = [{ id: 'p1', name: 'Tim', skill: 4, gender: 'M', active: true, createdAt: 1 }, { id: 'p2', name: 'Ana', skill: 2, gender: 'F', active: true, createdAt: 2 }]
+    const game = { id: 'g1', number: 1, court: 2, teamA: ['p1', 'p2'], teamB: ['p3', 'p4'], startedAt: 10, endedAt: 20, winner: 'A', score: [21, 15], shuttles: 2, shuttleType: 't1' }
+    const session = (id, date, extra = {}) => ({
+      id,
+      date,
+      status: 'closed',
+      courtFee: 800,
+      shuttleTypes: [{ id: 't1', name: 'Vortex', price: 95, extra: 0 }],
+      attendees: [{ playerId: 'p1', checkedInAt: 5, gamesPlayed: 1, paid: true, resting: false }],
+      games: [game],
+      queue: [],
+      ...extra,
+    })
+    const put = {
+      players: JSON.stringify(players),
+      session: JSON.stringify(session('now', '2026-10-30', { status: 'open', remote: { code: 'ABC234', key: 'secret-key', pin: '4820', handled: [] } })),
+      'h#old': JSON.stringify(session('old', '2026-10-25')),
+      'h#older': JSON.stringify(session('older', '2026-10-18')),
+    }
+    return call('POST', '/club/save', token, { baseRev: 0, put, remove: [] })
+  }
+
+  it('gives each club a link name from its name, the first time', async () => {
+    const { call, token, as } = setup()
+    expect((await call('GET', '/club/link', token)).body).toEqual({ slug: 'serve-n-shout' })
+    expect((await call('GET', '/club/link', token)).body).toEqual({ slug: 'serve-n-shout' })
+    expect((await call('GET', '/club/link', as('olga'))).body).toEqual({ slug: 'other-club' })
+    expect(slugOf("Serve N' Shout!")).toBe('serve-n-shout')
+    expect((await call('GET', '/club/link')).status).toBe(401)
+  })
+
+  it('lets an organizer change it, if it is free and fits', async () => {
+    const { call, token, as } = setup()
+    expect((await call('POST', '/club/link', token, { slug: 'tim' })).body).toEqual({ slug: 'tim' })
+    expect((await call('GET', '/club/link', token)).body).toEqual({ slug: 'tim' })
+    // Another club can't take it; the old name is free again.
+    expect((await call('POST', '/club/link', as('olga'), { slug: 'tim' })).status).toBe(409)
+    expect((await call('POST', '/club/link', as('olga'), { slug: 'serve-n-shout' })).body).toEqual({ slug: 'serve-n-shout' })
+    for (const bad of ['ab', 'Tim Garcia', '-tim', 'tim-', 'a--b', 'x'.repeat(31), 'assets', 'tension-tester']) {
+      expect((await call('POST', '/club/link', token, { slug: bad })).status, bad).toBe(400)
+    }
+    // Uppercase is taken as lowercase.
+    expect((await call('POST', '/club/link', token, { slug: 'TIMS' })).body).toEqual({ slug: 'tims' })
+  })
+
+  it('shows names, games and check-in times without signing in, and nothing private', async () => {
+    const { call, token } = setup()
+    await saved(call, token)
+    await call('POST', '/club/link', token, { slug: 'tim' })
+    const res = await call('GET', '/public/tim')
+    expect(res.status).toBe(200)
+    expect(res.body.club).toEqual({ name: 'Serve N Shout' })
+    expect(res.body.players).toEqual([{ id: 'p1', name: 'Tim' }, { id: 'p2', name: 'Ana' }])
+    expect(res.body.history.map((s) => s.date)).toEqual(['2026-10-25', '2026-10-18'])
+    expect(res.body.session).toEqual({
+      id: 'now',
+      date: '2026-10-30',
+      status: 'open',
+      attendees: [{ playerId: 'p1', checkedInAt: 5 }],
+      games: [{ id: 'g1', number: 1, court: 2, teamA: ['p1', 'p2'], teamB: ['p3', 'p4'], startedAt: 10, endedAt: 20, winner: 'A', score: [21, 15] }],
+    })
+    // No PIN, check-in key, money, payments or skill levels.
+    const text = JSON.stringify(res.body)
+    for (const secret of ['secret-key', '4820', 'ABC234', 'courtFee', 'price', 'paid', 'skill', 'gender']) {
+      expect(text, secret).not.toContain(secret)
+    }
+  })
+
+  it('is not found for unknown names, old names and clubs waiting for approval', async () => {
+    const { call, token } = setup()
+    expect((await call('GET', '/public/nobody')).status).toBe(404)
+    expect((await call('GET', '/public/../club')).status).toBe(404)
+    await call('GET', '/club/link', token)
+    await call('POST', '/club/link', token, { slug: 'tim' })
+    expect((await call('GET', '/public/serve-n-shout')).status).toBe(404)
+    expect((await call('GET', '/public/tim')).status).toBe(200)
+    // A new club waiting for approval has no public page.
+    const { db } = setup()
+    await db.createClub({ id: 'c3', name: 'New club', code: 'NEWCL2', approved: false })
+    await db.setSlug('c3', 'new-club', null)
+    const api = createClubApi(db, memoryAccounts(), devTokens().verify)
+    expect((await api({ method: 'GET', path: '/public/new-club' })).status).toBe(404)
   })
 })

@@ -14,21 +14,19 @@ import {
   playedGames,
   playerRecords,
   rivalries,
-  sessionsWithin,
   streaks,
   winRate,
   worstRecord,
   type PlayerRecord,
 } from '../lib/stats'
 import { PlayerStats } from '../components/PlayerStats'
+import { SessionSelect } from '../components/SessionSelect'
 import { PlaceCell, ShareIcon, Standings } from '../components/Standings'
 import { EmptyState } from '../components/ui'
 import { AWARD_SIZE, awardImage, checkinImage, drawAward, shareImage, type AwardArt, type AwardTone } from '../lib/shareImage'
+import { useScope } from '../lib/scope'
 import { usePlayerMap, useStore } from '../store/useStore'
 import type { Pair, Session } from '../types'
-
-/** 'all', the last three months ('3m'), or a session id. */
-type Scope = string
 
 const pct = (r: PlayerRecord) => {
   const rate = winRate(r)
@@ -45,22 +43,10 @@ export function StatsPage() {
   const session = useStore((s) => s.session)
   const history = useStore((s) => s.history)
   const players = usePlayerMap()
-  const [scope, setScope] = useState<Scope>('all')
+  const { scope, setScope, all, recent, sessions, span, label } = useScope(session, history)
   const [view, setView] = useState<'overview' | 'players'>('overview')
   const [chosen, setChosen] = useState<string | null>(null)
-
-  const all = [session, ...history]
-  const recent = sessionsWithin(all, 3)
-  const played = (list: Session[]) => list.filter((s) => s.games.length).length
-  const sessions = scope === 'all' ? all : scope === '3m' ? recent : all.filter((s) => s.id === scope)
-  const span = scope === 'all' || scope === '3m'
   const games = playedGames(sessions)
-  const label =
-    scope === 'all'
-      ? 'All time'
-      : scope === '3m'
-        ? 'Last 3 months'
-        : `${longDate(sessions[0]?.date ?? session.date)}${scope === session.id ? ' · today' : ''}`
   const name = (id: string) => players.get(id)?.name ?? 'Removed player'
   const names = (p: Pair) => p.map(name).sort((a, b) => a.localeCompare(b)).join(' & ')
 
@@ -81,24 +67,15 @@ export function StatsPage() {
             </button>
           ))}
         </div>
-        <select
-          className="d-select ml-auto w-72 font-semibold"
-          aria-label="Sessions to show"
-          value={scope}
-          onChange={(e) => setScope(e.target.value)}
-        >
-          <option value="all">All time · {played(all)} sessions</option>
-          <option value="3m">Last 3 months · {played(recent)} sessions</option>
-          <option value={session.id}>Today (current) · {session.games.length} games</option>
-          {history.map((s) => (
-            <option key={s.id} value={s.id}>
-              {longDate(s.date)}
-              {s.games.length > 0 &&
-                ` · ${new Date(Math.min(...s.games.map((g) => g.startedAt))).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}`}
-              {` · ${s.games.length} games`}
-            </option>
-          ))}
-        </select>
+        <SessionSelect
+          className="ml-auto w-72"
+          scope={scope}
+          onChange={setScope}
+          session={session}
+          history={history}
+          all={all}
+          recent={recent}
+        />
       </div>
 
       {games.length === 0 ? (
