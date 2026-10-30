@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Session } from '../types'
 import { bumpedPlayers, meetCounts, metPairs, pairKey, partnerCounts, splitTeams, suggestSwap } from './balance'
 import { costSummary, courtBooking, money, sessionStarted, shuttleCount, shuttlesInStock } from './cost'
@@ -7,7 +7,7 @@ import { parseNames } from './importNames'
 import { matchSkill, planGames, winnersStayGame } from './plan'
 import { arrivals, bestRecord, scoreLeader, checkinPlaces, checkinStandings, duoRecords, form, mateRecords, mostOften, gameExtremes, gameTime, helpFrom, ordinal, places, playedGames, sessionsWithin, standings, playerRecords, rivalries, streaks, winRate, worstRecord } from './stats'
 import { dequeue, enqueue, move, nextFour, placeByArrival, pushFront, swap } from './queue'
-import { isHelpStruggling, isSkillMatch, newSession, useStore } from '../store/useStore'
+import { isHelpStruggling, isSkillMatch, migrateStore, newSession, playedOn, redate, useStore } from '../store/useStore'
 
 const skills: Record<string, number> = { a: 5, b: 4, c: 2, d: 1, e: 3, f: 3, g: 1, h: 1 }
 const skillOf = (id: string) => skills[id]
@@ -1249,5 +1249,74 @@ describe('club cloud documents', async () => {
     expect(batches.length).toBe(3)
     expect(batches.every((b) => Object.keys(b.put).length <= 80)).toBe(true)
     expect(batches.reduce((n, b) => n + Object.keys(b.put).length, 0)).toBe(202)
+  })
+})
+
+describe('session dates', () => {
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+  const at = (day: number, h: number, m = 0) => new Date(2026, 9, day, h, m).getTime()
+
+  it('dates a session the day play starts, not the day it was set up', () => {
+    vi.useFakeTimers()
+    // Monday: a session is closed, so the next one is set up straight away.
+    vi.setSystemTime(at(26, 22))
+    useStore.setState({ session: newSession(), history: [] })
+    const st = useStore.getState()
+    expect(useStore.getState().session.date).toBe('2026-10-26')
+    // Settings changed during the week don't count as playing.
+    st.setCourtCount(3)
+    expect(useStore.getState().session.date).toBe('2026-10-26')
+    // Friday: opening phone check-in dates it, so players' phones show the right day.
+    vi.setSystemTime(at(30, 15, 45))
+    st.openRemote('1234')
+    expect(useStore.getState().session.date).toBe('2026-10-30')
+    // Without phone check-in, the first check-in dates it.
+    vi.setSystemTime(at(26, 22))
+    useStore.setState({ session: newSession() })
+    vi.setSystemTime(at(30, 16, 1))
+    st.checkIn('a')
+    expect(useStore.getState().session.date).toBe('2026-10-30')
+    // Later check-ins don't move it, even past midnight.
+    vi.setSystemTime(at(31, 0, 30))
+    st.checkIn('b')
+    expect(useStore.getState().session.date).toBe('2026-10-30')
+  })
+
+  it('dates a closed session by its first game', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(at(30, 21))
+    const game = (startedAt: number) =>
+      ({ id: `g${startedAt}`, court: 1, teamA: ['a', 'b'], teamB: ['c', 'd'], startedAt, endedAt: startedAt + 600_000, shuttles: 0 }) as Session['games'][number]
+    useStore.setState({
+      // Set up Monday and played Friday, from before this was fixed.
+      session: { ...newSession(), date: '2026-10-26', attendees: [{ playerId: 'a', checkedInAt: at(30, 15, 50), gamesPlayed: 1, paid: false, resting: false }], games: [game(at(30, 16, 6)), game(at(30, 20, 30))] },
+      history: [],
+    })
+    useStore.getState().closeSession()
+    expect(useStore.getState().history[0].date).toBe('2026-10-30')
+  })
+
+  it('repairs past sessions: by the first game, else the first check-in, else left alone', () => {
+    const base = { ...newSession(), date: '2026-10-26' }
+    const played = { ...base, games: [{ id: 'g', court: 1, teamA: ['a', 'b'], teamB: ['c', 'd'], startedAt: at(30, 16, 6), endedAt: at(30, 16, 17), shuttles: 0 }] } as Session
+    const checkedIn = { ...base, attendees: [{ playerId: 'a', checkedInAt: at(29, 18), gamesPlayed: 0, paid: false, resting: false }] }
+    expect(playedOn(played)).toBe('2026-10-30')
+    expect(redate(played).date).toBe('2026-10-30')
+    expect(redate(checkedIn).date).toBe('2026-10-29')
+    expect(redate(base)).toBe(base)
+    // Already right: the same object back, so nothing is saved again.
+    const right = { ...played, date: '2026-10-30' }
+    expect(redate(right)).toBe(right)
+  })
+
+  it('repairs saved data once, when the app updates', () => {
+    const stale = { ...newSession(), date: '2026-10-26', games: [{ id: 'g', court: 1, teamA: ['a', 'b'], teamB: ['c', 'd'], startedAt: at(30, 16, 6), endedAt: at(30, 16, 17), shuttles: 0 }] } as Session
+    const fixed = migrateStore({ players: [], session: newSession(), history: [stale] }, 2)
+    expect(fixed.history[0].date).toBe('2026-10-30')
+    // Data downloaded from the club is repaired too.
+    useStore.getState().importData({ players: [], history: [stale] })
+    expect(useStore.getState().history[0].date).toBe('2026-10-30')
   })
 })

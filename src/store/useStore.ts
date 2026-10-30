@@ -15,7 +15,31 @@ export interface PhoneCheckin {
 }
 
 const uid = () => crypto.randomUUID()
-const today = () => new Date().toLocaleDateString('en-CA')
+const dayOf = (ms: number) => new Date(ms).toLocaleDateString('en-CA')
+const today = () => dayOf(Date.now())
+
+/** Whether play has started: a check-in, a game, the court timer or phone check-in. */
+const hasPlay = (s: Session) => s.attendees.length > 0 || s.games.length > 0 || !!s.timer || !!s.remote
+
+/**
+ * The day a session was played: its first game's, or else its first check-in's
+ * or court timer's. Undefined before anything happened.
+ */
+export function playedOn(s: Session): string | undefined {
+  const first = s.games.length
+    ? Math.min(...s.games.map((g) => g.startedAt))
+    : Math.min(...s.attendees.map((a) => a.checkedInAt), s.timer?.startedAt ?? Infinity)
+  return Number.isFinite(first) ? dayOf(first) : undefined
+}
+
+/**
+ * Sessions dated the day they were set up rather than played (before this was
+ * fixed, a session kept the date the previous one was closed): dated by play.
+ */
+export function redate(s: Session): Session {
+  const day = playedOn(s)
+  return day && day !== s.date ? { ...s, date: day } : s
+}
 
 /** Give an older session (one shuttle price) a shuttle type list. */
 export function withShuttleTypes(s: Session): Session {
@@ -287,10 +311,26 @@ interface State {
   importData: (data: { players: Player[]; session?: Session; history?: Session[] }) => void
 }
 
+/** Brings data saved by an older version of the app up to date. */
+export function migrateStore(state: unknown, version: number) {
+  const st = state as State
+  // v2: shuttle types with their own prices.
+  if (version < 2 && st?.session) st.session = withShuttleTypes(st.session)
+  // v3: past sessions dated the day they were played, not set up.
+  if (version < 3 && st?.history) st.history = st.history.map(redate)
+  return st
+}
+
 export const useStore = create<State>()(
   persist(
     (set) => {
-      const updateSession = (fn: (s: Session) => Session) => set((st) => ({ session: fn(st.session) }))
+      // The next session is set up as soon as one closes, maybe days early: it's
+      // dated when play starts (see hasPlay) instead.
+      const updateSession = (fn: (s: Session) => Session) =>
+        set((st) => {
+          const next = fn(st.session)
+          return { session: !hasPlay(st.session) && hasPlay(next) ? { ...next, date: today() } : next }
+        })
 
       return {
         players: [],
@@ -647,6 +687,7 @@ export const useStore = create<State>()(
             const now = Date.now()
             const closed: Session = {
               ...st.session,
+              date: playedOn(st.session) ?? st.session.date,
               status: 'closed',
               games: st.session.games.map((g) => (g.endedAt ? g : { ...g, endedAt: now })),
               courts: st.session.courts.map(() => null),
@@ -664,19 +705,14 @@ export const useStore = create<State>()(
           set((st) => ({
             players: data.players ?? st.players,
             session: data.session ? withShuttleTypes(data.session) : st.session,
-            history: data.history ?? st.history,
+            history: data.history?.map(redate) ?? st.history,
           })),
       }
     },
     {
       name: 'mbq-store',
-      version: 2,
-      migrate: (state, version) => {
-        const st = state as State
-        // v2: shuttle types with their own prices.
-        if (version < 2 && st?.session) st.session = withShuttleTypes(st.session)
-        return st
-      },
+      version: 3,
+      migrate: migrateStore,
     },
   ),
 )
