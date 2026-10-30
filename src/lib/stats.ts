@@ -243,6 +243,20 @@ export function gameExtremes<T extends Game>(games: T[]): { longest?: T; shortes
   return { longest, shortest }
 }
 
+/** Both teams reach this many points: deuce, and someone has to get 2 clear. */
+export const DEUCE = 20
+
+/**
+ * Games that went to deuce (both teams reached 20) and were won, highest
+ * first: the most points, then the most recent. Only scored games count.
+ */
+export function deuceGames<T extends Game>(games: T[]): T[] {
+  const total = (g: T) => g.score![0] + g.score![1]
+  return games
+    .filter((g) => g.endedAt && g.winner && g.score && Math.min(...g.score) >= DEUCE)
+    .sort((a, b) => total(b) - total(a) || b.startedAt - a.startedAt)
+}
+
 /** A game's length as m:ss. */
 export function gameTime(g: Game): string {
   const sec = Math.round(gameLength(g) / 1000)

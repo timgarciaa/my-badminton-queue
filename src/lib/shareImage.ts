@@ -479,6 +479,7 @@ export const AWARD_TONES = {
   lime: ['#365314', '#65a30d', '#d9f99d'],
   cyan: ['#164e63', '#0891b2', '#a5f3fc'],
   fuchsia: ['#701a75', '#c026d3', '#f5d0fe'],
+  blue: ['#172554', '#1d4ed8', '#bfdbfe'],
 } as const
 
 export type AwardTone = keyof typeof AWARD_TONES
@@ -615,10 +616,91 @@ export type AwardArt =
   | 'stopwatch'
   | 'sunrise'
   | 'moon'
+  | 'deuce'
 
 type Tone = readonly [string, string, string]
 
 const ARTS: Record<AwardArt, (ctx: Ctx, cx: number, cy: number, tone: Tone) => void> = {
+  // Highest deuce: a flip scoreboard stuck at 20 : 20, with lightning either side.
+  deuce(ctx, cx, cy, [deep, , light]) {
+    burst(ctx, cx, cy, 250, 300, 16, 'rgba(255,255,255,0.35)', 6)
+    // Crossed rackets behind the board.
+    racket(ctx, cx - 170, cy + 230, 330, 0.55, '#ffffff', deep)
+    racket(ctx, cx + 170, cy + 230, 330, -0.55, '#ffffff', deep)
+    // The board on its stand.
+    ctx.fillStyle = '#0b1220'
+    ctx.beginPath()
+    ctx.roundRect(cx - 18, cy + 120, 36, 90, 8)
+    ctx.fill()
+    ctx.beginPath()
+    ctx.roundRect(cx - 90, cy + 200, 180, 26, 10)
+    ctx.fill()
+    ctx.fillStyle = '#111827'
+    ctx.strokeStyle = light
+    ctx.lineWidth = 8
+    ctx.beginPath()
+    ctx.roundRect(cx - 280, cy - 125, 560, 255, 34)
+    ctx.fill()
+    ctx.stroke()
+    // Two flip cards reading 20, with the fold across the middle.
+    for (const side of [-1, 1]) {
+      const x = cx + side * 132
+      const face = ctx.createLinearGradient(0, cy - 95, 0, cy + 100)
+      face.addColorStop(0, '#334155')
+      face.addColorStop(0.5, '#1e293b')
+      face.addColorStop(0.5, '#0f172a')
+      face.addColorStop(1, '#1e293b')
+      ctx.fillStyle = face
+      ctx.beginPath()
+      ctx.roundRect(x - 105, cy - 95, 210, 195, 20)
+      ctx.fill()
+      ctx.fillStyle = '#ffffff'
+      ctx.font = `900 150px ${FONT}`
+      ctx.textAlign = 'center'
+      ctx.textBaseline = 'middle'
+      ctx.fillText('20', x, cy + 8)
+      ctx.strokeStyle = '#020617'
+      ctx.lineWidth = 6
+      ctx.beginPath()
+      ctx.moveTo(x - 105, cy + 3)
+      ctx.lineTo(x + 105, cy + 3)
+      ctx.stroke()
+      for (const y of [cy - 30, cy + 36]) {
+        ctx.fillStyle = '#64748b'
+        ctx.fillRect(x - 110, y - 5, 10, 10)
+        ctx.fillRect(x + 100, y - 5, 10, 10)
+      }
+    }
+    ctx.fillStyle = light
+    for (const y of [cy - 25, cy + 35]) {
+      ctx.beginPath()
+      ctx.arc(cx, y, 12, 0, Math.PI * 2)
+      ctx.fill()
+    }
+    // Lightning bolts: the tension of two points to win.
+    for (const side of [-1, 1]) {
+      const x = cx + side * 345
+      const y = cy - 70
+      ctx.fillStyle = '#fde047'
+      ctx.strokeStyle = '#ca8a04'
+      ctx.lineWidth = 5
+      ctx.beginPath()
+      ctx.moveTo(x + side * 18, y - 90)
+      ctx.lineTo(x - side * 40, y + 20)
+      ctx.lineTo(x, y + 20)
+      ctx.lineTo(x - side * 22, y + 120)
+      ctx.lineTo(x + side * 48, y - 5)
+      ctx.lineTo(x + side * 8, y - 5)
+      ctx.lineTo(x + side * 38, y - 90)
+      ctx.closePath()
+      ctx.fill()
+      ctx.stroke()
+    }
+    star(ctx, cx - 300, cy - 190, 16, '#ffffff', 4, 0.35)
+    star(ctx, cx + 290, cy - 200, 22, light, 4, 0.35)
+    star(ctx, cx + 230, cy + 170, 14, '#ffffff', 4, 0.35)
+  },
+
   // Unbeatable duo: a golden trophy over two crossed rackets.
   trophy(ctx, cx, cy, [deep]) {
     racket(ctx, cx - 200, cy + 210, 380, 0.5, '#ffffff', deep)

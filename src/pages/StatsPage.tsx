@@ -5,6 +5,7 @@ import {
   bestRecord,
   checkinPlaces,
   checkinStandings,
+  deuceGames,
   duoRecords,
   finishedGames,
   gameExtremes,
@@ -180,7 +181,13 @@ function Dashboard({
   const mostPlayed = Math.max(...records.map((r) => r.played))
   const iron = records.filter((r) => r.played === mostPlayed).map((r) => r.id)
   const bestPlayer = bestRecord(records, 3)
-  const { longest, shortest } = gameExtremes(finishedGames(sessions))
+  const finished = finishedGames(sessions)
+  const { longest, shortest } = gameExtremes(finished)
+  const deuce = deuceGames(finished)[0]
+  // The winners and their score first: Tim & Ana, 29–27, beat Ben & Carla.
+  const sides = (g: NonNullable<typeof deuce>) => (g.winner === 'A' ? [g.teamA, g.teamB] : [g.teamB, g.teamA])
+  const shortDate = (iso: string) => new Date(iso + 'T00:00').toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })
+  const points = (g: NonNullable<typeof deuce>) => (g.winner === 'A' ? g.score! : [g.score![1], g.score![0]])
   const which = (g: NonNullable<typeof longest>) => `Game ${g.number} · Court ${g.court}`
   const teams = (g: NonNullable<typeof longest>) =>
     `${names(g.teamA)} vs ${names(g.teamB)}${showDate ? ` · ${longDate(g.date)}` : ''}`
@@ -254,6 +261,15 @@ function Dashboard({
           empty="No game lasted over a minute"
         >
           {shortest && teams(shortest)}
+        </Award>
+        <Award
+          title="Highest deuce" art="deuce"
+          tone="blue"
+          who={deuce && names(sides(deuce)[0])}
+          value={deuce && points(deuce).join('–')}
+          empty="No scored game has gone to deuce (20 all) yet"
+        >
+          {deuce && `beat ${names(sides(deuce)[1])} · ${showDate ? shortDate(deuce.date) : which(deuce)}`}
         </Award>
         <Award
           title="Early bird" art="sunrise"

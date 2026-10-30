@@ -6,7 +6,7 @@ import type { Help } from './balance'
 import { parseNames } from './importNames'
 import { findPlayer, publicPath } from './publicStats'
 import { matchSkill, planGames, winnersStayGame } from './plan'
-import { arrivals, bestRecord, scoreLeader, checkinPlaces, checkinStandings, duoRecords, form, mateRecords, mostOften, gameExtremes, gameTime, helpFrom, ordinal, places, playedGames, sessionsWithin, standings, playerRecords, rivalries, streaks, winRate, worstRecord } from './stats'
+import { arrivals, bestRecord, deuceGames, scoreLeader, checkinPlaces, checkinStandings, duoRecords, form, mateRecords, mostOften, gameExtremes, gameTime, helpFrom, ordinal, places, playedGames, sessionsWithin, standings, playerRecords, rivalries, streaks, winRate, worstRecord } from './stats'
 import { dequeue, enqueue, move, nextFour, placeByArrival, pushFront, swap } from './queue'
 import { isHelpStruggling, isSkillMatch, migrateStore, newSession, playedOn, redate, useStore } from '../store/useStore'
 
@@ -1354,5 +1354,24 @@ describe('public stats page address', () => {
     expect(findPlayer(players, 'ana')).toBeUndefined()
     expect(findPlayer(players, 'ninong-aries')?.id).toBe('4')
     expect(findPlayer(players, 'bob')).toBeUndefined()
+  })
+})
+
+describe('deuce games', () => {
+  let t = 0
+  const g = (score?: [number, number], extra: Partial<Session['games'][number]> = {}) =>
+    ({ id: `d${++t}`, court: 1, teamA: ['a', 'b'], teamB: ['c', 'd'], startedAt: t * 1000, endedAt: t * 1000 + 600, shuttles: 0, winner: score && score[0] > score[1] ? 'A' : 'B', score, ...extra }) as Session['games'][number]
+
+  it('takes games where both teams reached 20, most points first', () => {
+    const games = [g([21, 19]), g([22, 20]), g([27, 29]), g([30, 29]), g([21, 10]), g()]
+    expect(deuceGames(games).map((x) => x.score)).toEqual([[30, 29], [27, 29], [22, 20]])
+  })
+
+  it('breaks ties by the most recent, and skips games with no winner', () => {
+    const older = g([24, 22])
+    const newer = g([22, 24])
+    const unfinished = g([20, 20], { winner: undefined, outOfHours: true })
+    expect(deuceGames([older, newer, unfinished]).map((x) => x.id)).toEqual([newer.id, older.id])
+    expect(deuceGames([g([21, 18])])).toEqual([])
   })
 })
