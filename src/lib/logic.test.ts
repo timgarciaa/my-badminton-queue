@@ -8,7 +8,7 @@ import { clash, dueGame, timeRange, upcoming, weekly } from './schedule'
 import { checkSchedule } from './useScheduleClock'
 import { findPlayer, publicPath } from './publicStats'
 import { matchSkill, planGames, winnersStayGame } from './plan'
-import { arrivals, bestRecord, deuceGames, scoreLeader, checkinPlaces, checkinStandings, duoRecords, form, mateRecords, mostOften, gameExtremes, gameTime, helpFrom, ordinal, places, playedGames, sessionsWithin, standings, playerRecords, rivalries, streaks, winRate, worstRecord } from './stats'
+import { arrivals, bestRecord, blowoutGames, deuceGames, scoreLeader, checkinPlaces, checkinStandings, duoRecords, form, mateRecords, mostOften, gameExtremes, gameTime, helpFrom, ordinal, places, playedGames, sessionsWithin, standings, playerRecords, rivalries, streaks, winRate, worstRecord } from './stats'
 import { dequeue, enqueue, move, nextFour, placeByArrival, pushFront, swap } from './queue'
 import { isHelpStruggling, isSkillMatch, migrateStore, newSession, playedOn, redate, useStore } from '../store/useStore'
 
@@ -1464,5 +1464,24 @@ describe('scheduled games', () => {
     const docs = toDocs({ ...base, schedule })
     expect(fromDocs(docs).schedule).toEqual(schedule)
     expect(fromDocs(toDocs(base)).schedule).toEqual([])
+  })
+})
+
+describe('blowout games', () => {
+  let t = 0
+  const g = (score?: [number, number], extra: Partial<Session['games'][number]> = {}) =>
+    ({ id: `b${++t}`, court: 1, teamA: ['a', 'b'], teamB: ['c', 'd'], startedAt: t * 1000, endedAt: t * 1000 + 600, shuttles: 0, winner: score && score[0] > score[1] ? 'A' : 'B', score, ...extra }) as Session['games'][number]
+
+  it('takes games won by 10 or more, biggest gap first', () => {
+    const games = [g([21, 12]), g([21, 11]), g([4, 21]), g([21, 0]), g([22, 20]), g()]
+    expect(blowoutGames(games).map((x) => x.score)).toEqual([[21, 0], [4, 21], [21, 11]])
+  })
+
+  it('breaks ties by the most recent, and skips games with no winner', () => {
+    const older = g([21, 5])
+    const newer = g([5, 21])
+    const unfinished = g([15, 2], { winner: undefined, outOfHours: true })
+    expect(blowoutGames([older, newer, unfinished]).map((x) => x.id)).toEqual([newer.id, older.id])
+    expect(blowoutGames([g([21, 12])])).toEqual([])
   })
 })

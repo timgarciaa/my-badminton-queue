@@ -257,6 +257,20 @@ export function deuceGames<T extends Game>(games: T[]): T[] {
     .sort((a, b) => total(b) - total(a) || b.startedAt - a.startedAt)
 }
 
+/** A win by at least this many points is a blowout. */
+export const BLOWOUT = 10
+
+/**
+ * Games won by BLOWOUT points or more, biggest gap first, then the most
+ * recent. Only scored games count.
+ */
+export function blowoutGames<T extends Game>(games: T[]): T[] {
+  const gap = (g: T) => Math.abs(g.score![0] - g.score![1])
+  return games
+    .filter((g) => g.endedAt && g.winner && g.score && gap(g) >= BLOWOUT)
+    .sort((a, b) => gap(b) - gap(a) || b.startedAt - a.startedAt)
+}
+
 /** A game's length as m:ss. */
 export function gameTime(g: Game): string {
   const sec = Math.round(gameLength(g) / 1000)

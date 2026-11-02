@@ -5,6 +5,8 @@ import {
   bestRecord,
   checkinPlaces,
   checkinStandings,
+  BLOWOUT,
+  blowoutGames,
   deuceGames,
   duoRecords,
   finishedGames,
@@ -184,6 +186,7 @@ function Dashboard({
   const finished = finishedGames(sessions)
   const { longest, shortest } = gameExtremes(finished)
   const deuce = deuceGames(finished)[0]
+  const blowout = blowoutGames(finished)[0]
   // The winners and their score first: Tim & Ana, 29–27, beat Ben & Carla.
   const sides = (g: NonNullable<typeof deuce>) => (g.winner === 'A' ? [g.teamA, g.teamB] : [g.teamB, g.teamA])
   const shortDate = (iso: string) => new Date(iso + 'T00:00').toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })
@@ -270,6 +273,16 @@ function Dashboard({
           empty="No scored game has gone to deuce (20 all) yet"
         >
           {deuce && `beat ${names(sides(deuce)[1])} · ${showDate ? shortDate(deuce.date) : which(deuce)}`}
+        </Award>
+        <Award
+          title="Biggest blowout" art="blowout"
+          tone="red"
+          who={blowout && names(sides(blowout)[0])}
+          value={blowout && points(blowout).join('–')}
+          empty={`No scored game has been won by ${BLOWOUT} or more yet`}
+        >
+          {blowout &&
+            `beat ${names(sides(blowout)[1])} by ${Math.abs(blowout.score![0] - blowout.score![1])} · ${showDate ? shortDate(blowout.date) : which(blowout)}`}
         </Award>
         <Award
           title="Early bird" art="sunrise"

@@ -480,6 +480,7 @@ export const AWARD_TONES = {
   cyan: ['#164e63', '#0891b2', '#a5f3fc'],
   fuchsia: ['#701a75', '#c026d3', '#f5d0fe'],
   blue: ['#172554', '#1d4ed8', '#bfdbfe'],
+  red: ['#7f1d1d', '#dc2626', '#fecaca'],
 } as const
 
 export type AwardTone = keyof typeof AWARD_TONES
@@ -617,6 +618,7 @@ export type AwardArt =
   | 'sunrise'
   | 'moon'
   | 'deuce'
+  | 'blowout'
 
 type Tone = readonly [string, string, string]
 
@@ -699,6 +701,90 @@ const ARTS: Record<AwardArt, (ctx: Ctx, cx: number, cy: number, tone: Tone) => v
     star(ctx, cx - 300, cy - 190, 16, '#ffffff', 4, 0.35)
     star(ctx, cx + 290, cy - 200, 22, light, 4, 0.35)
     star(ctx, cx + 230, cy + 170, 14, '#ffffff', 4, 0.35)
+  },
+
+  // Biggest blowout: a towering score bar beside a stub, the gap marked, and a
+  // shuttle smashed down onto the losers.
+  blowout(ctx, cx, cy, [deep, , light]) {
+    burst(ctx, cx, cy, 250, 300, 16, 'rgba(255,255,255,0.35)', 6)
+    const floor = cy + 200
+    const tall = cy - 115
+    const short = floor - 55
+    // Floor.
+    ctx.fillStyle = '#0b1220'
+    ctx.beginPath()
+    ctx.roundRect(cx - 320, floor, 640, 22, 11)
+    ctx.fill()
+    // Winners' bar, with a gold star on top.
+    const bar = ctx.createLinearGradient(0, tall, 0, floor)
+    bar.addColorStop(0, '#ffffff')
+    bar.addColorStop(1, light)
+    ctx.fillStyle = bar
+    ctx.beginPath()
+    ctx.roundRect(cx - 270, tall, 200, floor - tall, [24, 24, 0, 0])
+    ctx.fill()
+    ctx.fillStyle = deep
+    ctx.font = `900 110px ${FONT}`
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'middle'
+    ctx.fillText('21', cx - 170, tall + 85)
+    star(ctx, cx - 170, tall - 52, 44, '#fde047', 5, 0.45)
+    // Losers' stub.
+    ctx.fillStyle = 'rgba(255,255,255,0.5)'
+    ctx.beginPath()
+    ctx.roundRect(cx + 70, short, 200, floor - short, [18, 18, 0, 0])
+    ctx.fill()
+    // The gap: dashed guides from the top of each bar and an arrow between them.
+    ctx.strokeStyle = '#fde047'
+    ctx.lineWidth = 6
+    ctx.setLineDash([16, 14])
+    ctx.beginPath()
+    ctx.moveTo(cx - 70, tall)
+    ctx.lineTo(cx + 40, tall)
+    ctx.moveTo(cx - 40, short)
+    ctx.lineTo(cx + 70, short)
+    ctx.stroke()
+    ctx.setLineDash([])
+    ctx.lineWidth = 12
+    ctx.lineCap = 'round'
+    ctx.beginPath()
+    ctx.moveTo(cx, tall + 30)
+    ctx.lineTo(cx, short - 30)
+    ctx.stroke()
+    ctx.fillStyle = '#fde047'
+    for (const [y, dir] of [
+      [tall + 4, 1],
+      [short - 4, -1],
+    ]) {
+      ctx.beginPath()
+      ctx.moveTo(cx, y)
+      ctx.lineTo(cx - 28, y + dir * 44)
+      ctx.lineTo(cx + 28, y + dir * 44)
+      ctx.closePath()
+      ctx.fill()
+    }
+    // The smash: speed lines, the shuttle diving cork first, and the impact.
+    const hitX = cx + 170
+    const hitY = short - 6
+    ctx.strokeStyle = 'rgba(255,255,255,0.7)'
+    ctx.lineCap = 'round'
+    for (const [off, len, width] of [
+      [-40, 120, 7],
+      [0, 170, 9],
+      [40, 110, 7],
+    ]) {
+      const sx = hitX + 0.56 * 260 + off * 0.82
+      const sy = hitY - 0.82 * 260 + off * 0.56
+      ctx.lineWidth = width
+      ctx.beginPath()
+      ctx.moveTo(sx, sy)
+      ctx.lineTo(sx + 0.56 * len, sy - 0.82 * len)
+      ctx.stroke()
+    }
+    shuttle(ctx, hitX, hitY, 230, 0.6, deep)
+    burst(ctx, hitX, hitY + 6, 40, 85, 9, '#fde047', 8, 0.2)
+    star(ctx, cx - 300, cy - 200, 18, '#ffffff', 4, 0.35)
+    star(ctx, cx + 300, cy + 140, 14, '#ffffff', 4, 0.35)
   },
 
   // Unbeatable duo: a golden trophy over two crossed rackets.
