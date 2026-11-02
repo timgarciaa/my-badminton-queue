@@ -123,6 +123,14 @@ export interface RemoteCheckin {
   handled: string[]
 }
 
+/** A game booked for later; the session starts by itself at `start` and counts down to `end`. */
+export interface ScheduledGame {
+  id: string
+  /** Epoch ms. */
+  start: number
+  end: number
+}
+
 export interface Session {
   id: string
   date: string
@@ -173,4 +181,6 @@ export interface Session {
   /** Players can check in on their phones while this is set. */
   remote?: RemoteCheckin
   status: 'open' | 'closed'
+  /** The scheduled game this session was started from, if any. */
+  scheduled?: { start: number; end: number }
 }

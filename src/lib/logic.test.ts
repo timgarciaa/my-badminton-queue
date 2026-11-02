@@ -4,6 +4,8 @@ import { bumpedPlayers, meetCounts, metPairs, pairKey, partnerCounts, splitTeams
 import { costSummary, courtBooking, money, sessionStarted, shuttleCount, shuttlesInStock } from './cost'
 import type { Help } from './balance'
 import { parseNames } from './importNames'
+import { clash, dueGame, timeRange, upcoming, weekly } from './schedule'
+import { checkSchedule } from './useScheduleClock'
 import { findPlayer, publicPath } from './publicStats'
 import { matchSkill, planGames, winnersStayGame } from './plan'
 import { arrivals, bestRecord, deuceGames, scoreLeader, checkinPlaces, checkinStandings, duoRecords, form, mateRecords, mostOften, gameExtremes, gameTime, helpFrom, ordinal, places, playedGames, sessionsWithin, standings, playerRecords, rivalries, streaks, winRate, worstRecord } from './stats'
@@ -1373,5 +1375,94 @@ describe('deuce games', () => {
     const unfinished = g([20, 20], { winner: undefined, outOfHours: true })
     expect(deuceGames([older, newer, unfinished]).map((x) => x.id)).toEqual([newer.id, older.id])
     expect(deuceGames([g([21, 18])])).toEqual([])
+  })
+})
+
+describe('scheduled games', () => {
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+  const at = (day: number, h: number, m = 0) => new Date(2026, 10, day, h, m).getTime()
+  const fresh = () => useStore.setState({ session: { ...newSession(), courtBooking: { courts: 3, hours: 1, rate: 300 } }, history: [], schedule: [] })
+
+  it('books games, refusing ones that overlap or end before they start', () => {
+    fresh()
+    const st = useStore.getState()
+    expect(st.scheduleGames([{ start: at(2, 16), end: at(2, 18) }])).toBe(true)
+    expect(st.scheduleGames([{ start: at(2, 17), end: at(2, 19) }])).toBe(false)
+    expect(st.scheduleGames([{ start: at(2, 18), end: at(2, 16) }])).toBe(false)
+    // Back to back is fine.
+    expect(st.scheduleGames([{ start: at(2, 18), end: at(2, 20) }])).toBe(true)
+    // A batch that clashes with itself books nothing.
+    expect(st.scheduleGames([{ start: at(3, 9), end: at(3, 11) }, { start: at(3, 10), end: at(3, 12) }])).toBe(false)
+    expect(useStore.getState().schedule).toHaveLength(2)
+    const [first] = useStore.getState().schedule
+    expect(st.rescheduleGame(first.id, at(2, 19), at(2, 21))).toBe(false)
+    expect(st.rescheduleGame(first.id, at(2, 15), at(2, 17))).toBe(true)
+    st.unscheduleGame(first.id)
+    expect(useStore.getState().schedule.map((g) => g.start)).toEqual([at(2, 18)])
+  })
+
+  it('repeats a game weekly at the same time', () => {
+    const weeks = weekly(at(2, 16), at(2, 18), 4)
+    expect(weeks.map((g) => new Date(g.start).getDate())).toEqual([2, 9, 16, 23])
+    expect(weeks.every((g) => g.end - g.start === 2 * 3600_000 && new Date(g.start).getHours() === 16)).toBe(true)
+  })
+
+  it('finds the game on now and the ones coming up', () => {
+    const games = [
+      { id: 'b', start: at(9, 16), end: at(9, 18) },
+      { id: 'a', start: at(2, 16), end: at(2, 18) },
+      { id: 'old', start: at(1, 16), end: at(1, 18) },
+    ]
+    expect(upcoming(games, at(2, 12)).map((g) => g.id)).toEqual(['a', 'b'])
+    expect(dueGame(games, at(2, 15, 59))).toBeUndefined()
+    expect(dueGame(games, at(2, 16))?.id).toBe('a')
+    expect(dueGame(games, at(2, 18))).toBeUndefined()
+    expect(clash(games, at(9, 17), at(9, 19))?.id).toBe('b')
+    expect(clash(games, at(9, 17), at(9, 19), 'b')).toBeUndefined()
+    expect(timeRange(at(2, 16), at(2, 18))).toMatch(/^4:00\s?–\s?6:00\sPM$|^16:00 – 18:00$/)
+  })
+
+  it('starts the session by itself at the game time, counting from the booked start', () => {
+    vi.useFakeTimers()
+    fresh()
+    useStore.getState().scheduleGames([{ start: at(2, 16), end: at(2, 18) }, { start: at(9, 16), end: at(9, 18) }])
+    checkSchedule(at(2, 15, 59))
+    expect(useStore.getState().session.timer).toBeUndefined()
+    // The iPad wakes up at 4:20: the clock still ends at 6.
+    vi.setSystemTime(at(2, 16, 20))
+    checkSchedule(at(2, 16, 20))
+    const { session, schedule } = useStore.getState()
+    expect(session.timer).toEqual({ startedAt: at(2, 16), minutes: 120 })
+    expect(session.scheduled).toEqual({ start: at(2, 16), end: at(2, 18) })
+    expect(session.date).toBe('2026-11-02')
+    // The court booking takes the game's hours.
+    expect(session.courtBooking).toEqual({ courts: 3, hours: 2, rate: 300 })
+    expect(session.courtFee).toBe(1800)
+    expect(schedule.map((g) => g.start)).toEqual([at(9, 16)])
+  })
+
+  it("doesn't start over a running clock, and forgets games that ended unstarted", () => {
+    fresh()
+    const st = useStore.getState()
+    st.startTimer(2)
+    st.scheduleGames([{ start: at(2, 16), end: at(2, 18) }])
+    const timer = useStore.getState().session.timer
+    checkSchedule(at(2, 17))
+    expect(useStore.getState().session.timer).toBe(timer)
+    expect(useStore.getState().schedule).toHaveLength(1)
+    checkSchedule(at(2, 18))
+    expect(useStore.getState().schedule).toEqual([])
+  })
+
+  it('saves the schedule to the club only when there is one', async () => {
+    const { fromDocs, toDocs } = await import('./cloud')
+    const base = { players: [], session: newSession(), history: [] }
+    expect(Object.keys(toDocs({ ...base, schedule: [] }))).not.toContain('schedule')
+    const schedule = [{ id: 'g', start: at(2, 16), end: at(2, 18) }]
+    const docs = toDocs({ ...base, schedule })
+    expect(fromDocs(docs).schedule).toEqual(schedule)
+    expect(fromDocs(toDocs(base)).schedule).toEqual([])
   })
 })

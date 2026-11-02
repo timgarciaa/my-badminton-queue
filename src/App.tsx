@@ -4,11 +4,13 @@ import { CLOUD, useCloud, useCloudSync, useSyncStatus } from './lib/cloud'
 import { LoginPage } from './pages/LoginPage'
 import { costSummary, money } from './lib/cost'
 import { useRemoteCheckin, useRemoteStatus } from './lib/remoteCheckin'
+import { useScheduleClock } from './lib/useScheduleClock'
 import { SessionTimer } from './components/SessionTimer'
 import { CheckInPage } from './pages/CheckInPage'
 import { CostsPage } from './pages/CostsPage'
 import { GamesPage } from './pages/GamesPage'
 import { PlayersPage } from './pages/PlayersPage'
+import { SchedulePage } from './pages/SchedulePage'
 import { SessionPage } from './pages/SessionPage'
 import { SettingsPage } from './pages/SettingsPage'
 import { StatsPage } from './pages/StatsPage'
@@ -22,6 +24,7 @@ const TABS = [
   { id: 'checkin', label: 'Check-in', icon: 'M5 12l4 4L19 6' },
   { id: 'players', label: 'Players', icon: 'M9 11a4 4 0 100-8 4 4 0 000 8zM2 21v-1a6 6 0 0112 0v1M16 3.5a4 4 0 010 7M22 21v-1a6 6 0 00-4-5.6' },
   { id: 'costs', label: 'Costs', icon: 'M8 21V3h5a4.5 4.5 0 010 9H8M5 6h14M5 9h14' },
+  { id: 'schedule', label: 'Schedule', icon: 'M4 6h16v14H4zM4 10h16M8 3v4M16 3v4M8 14h2M14 14h2M8 17h2' },
   { id: 'settings', label: 'Settings', icon: 'M4 6h16M4 12h16M4 18h16M8 4v4M16 10v4M10 16v4' },
 ] as const
 
@@ -46,6 +49,7 @@ function Main() {
   const joinRequests = useSyncStatus((s) => s.waiting)
   useRemoteCheckin()
   useCloudSync()
+  useScheduleClock()
 
   return (
     <div className="flex h-full flex-col">
@@ -60,7 +64,7 @@ function Main() {
           <CloudStatus onOpen={() => setTab('settings')} />
         </h1>
         <div className="ml-auto">
-          <SessionTimer />
+          <SessionTimer onSchedule={() => setTab('schedule')} onCosts={() => setTab('costs')} />
         </div>
         <div className="flex gap-6 text-sm text-slate-600">
           <Stat label="Present" value={session.attendees.length} />
@@ -80,6 +84,7 @@ function Main() {
         {tab === 'checkin' && <CheckInPage onGoToPlayers={() => setTab('players')} />}
         {tab === 'players' && <PlayersPage />}
         {tab === 'costs' && <CostsPage />}
+        {tab === 'schedule' && <SchedulePage />}
         {tab === 'settings' && <SettingsPage />}
       </main>
 

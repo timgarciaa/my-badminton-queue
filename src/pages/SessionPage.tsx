@@ -3,6 +3,7 @@ import { allSplits, bumpedPlayers, meetCounts, partnerCounts } from '../lib/bala
 import { gameShuttleType, shuttlesInStock } from '../lib/cost'
 import { matchSkill, planGames, winnersStayGame } from '../lib/plan'
 import { QueuePanel } from '../components/QueuePanel'
+import { clock, dayLabel, sameDay, upcoming } from '../lib/schedule'
 import { PointsInput } from '../components/Score'
 import { SetGameDialog } from '../components/SetGameDialog'
 import { PlayerTags, Stepper, elapsed, useNow } from '../components/ui'
@@ -80,6 +81,14 @@ export function SessionPage({ onGoToCheckIn }: { onGoToCheckIn: () => void }) {
   const history = useStore((s) => s.history)
   const plan = planNext(session, players, history)
   const started = !!session.timer
+  const schedule = useStore((s) => s.schedule)
+  const now = useNow(30_000)
+  const next = upcoming(schedule, now)[0]
+  const waiting = !next
+    ? 'Schedule the game first'
+    : sameDay(new Date(next.start), new Date(now))
+      ? `Starts at ${clock(next.start)}`
+      : `Next game ${dayLabel(next.start)}, ${clock(next.start)}`
 
   // Courts that don't fit at full size fold into narrow strips (an accordion),
   // so court cards keep their size whatever the count.
@@ -116,7 +125,7 @@ export function SessionPage({ onGoToCheckIn }: { onGoToCheckIn: () => void }) {
                   game={game}
                   gameNo={gameNo}
                   canStart={started && plan.games.length > 0}
-                  blocked={!started ? 'Start the session first' : 'Need 4 free players in the queue'}
+                  blocked={!started ? waiting : 'Need 4 free players in the queue'}
                   players={players}
                 />
               </div>
@@ -136,7 +145,7 @@ export function SessionPage({ onGoToCheckIn }: { onGoToCheckIn: () => void }) {
             <button
               className="d-btn h-11 border-slate-200 bg-white whitespace-nowrap"
               disabled={!started}
-              title={started ? undefined : 'Start the session first'}
+              title={started ? undefined : waiting}
               onClick={() => setSetting(true)}
             >
               Set a game

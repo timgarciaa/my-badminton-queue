@@ -26,8 +26,8 @@
 // (Authorization: Bearer ...).
 import { randomInt } from 'node:crypto'
 
-/** Document ids: players, session, and h#<session id> for past sessions. */
-export const DOC_ID = /^(players|session|h#[\w-]{1,64})$/
+/** Document ids: players, session, schedule (booked games) and h#<session id> for past sessions. */
+export const DOC_ID = /^(players|session|schedule|h#[\w-]{1,64})$/
 /** Per save; the app sends bigger saves in parts. */
 export const MAX_ACTIONS = 90
 /** Waiting requests: new clubs in all, and people asking to join each club. */

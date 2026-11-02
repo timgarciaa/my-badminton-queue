@@ -5,7 +5,8 @@ import { courtBooking, courtFeeOf, gameShuttleType, sessionStarted, shuttlesInSt
 import { heldIds, isSetReady, setIds } from '../lib/plan'
 import { applySwap, dequeue, enqueue, move, placeByArrival, pushFront, swap } from '../lib/queue'
 import { scoreLeader } from '../lib/stats'
-import type { CourtBooking, Game, GameSwap, Gender, Pair, Player, Session, SetGame, ShuttleType, Skill } from '../types'
+import { clash } from '../lib/schedule'
+import type { CourtBooking, Game, GameSwap, Gender, Pair, Player, ScheduledGame, Session, SetGame, ShuttleType, Skill } from '../types'
 
 /** A check-in made on a player's phone; ids starting with new- are names not on the list. */
 export interface PhoneCheckin {
@@ -201,6 +202,8 @@ interface State {
   players: Player[]
   session: Session
   history: Session[]
+  /** Games booked for later; each starts the session by itself at its time. */
+  schedule: ScheduledGame[]
 
   addPlayer: (name: string, skill: Skill, gender: Gender) => void
   /** Bulk add (import); gender left unset and skill Intermediate until edited. */
@@ -253,7 +256,21 @@ interface State {
   /** Change which shuttle type a game is using. */
   setGameShuttleType: (gameId: string, typeId: string) => void
   /** Start the session countdown for the booked hours. */
+  /** Start the session now, for this many hours (a game that wasn't scheduled). */
   startTimer: (hours: number) => void
+  /** Book games; false (and nothing booked) if one ends before it starts or shares time with another. */
+  scheduleGames: (games: { start: number; end: number }[]) => boolean
+  /** Move a booked game; false if it would share time with another. */
+  rescheduleGame: (id: string, start: number, end: number) => boolean
+  unscheduleGame: (id: string) => void
+  /**
+   * Start the session from a booked game: the clock runs from the game's start
+   * (even if the app opens late) to its end, and the court booking takes its
+   * hours. Nothing happens while the session's clock is already running.
+   */
+  startScheduled: (id: string) => void
+  /** Forget booked games that are over without having started. */
+  dropEnded: (now: number) => void
   /** Add or take away booked minutes. */
   adjustTimer: (minutes: number) => void
   stopTimer: () => void
@@ -308,7 +325,7 @@ interface State {
   resetSession: () => void
   /** Delete everything on this device: players, the current session and history. */
   clearAll: () => void
-  importData: (data: { players: Player[]; session?: Session; history?: Session[] }) => void
+  importData: (data: { players: Player[]; session?: Session; history?: Session[]; schedule?: ScheduledGame[] }) => void
 }
 
 /** Brings data saved by an older version of the app up to date. */
@@ -323,19 +340,17 @@ export function migrateStore(state: unknown, version: number) {
 
 export const useStore = create<State>()(
   persist(
-    (set) => {
+    (set, get) => {
       // The next session is set up as soon as one closes, maybe days early: it's
       // dated when play starts (see hasPlay) instead.
-      const updateSession = (fn: (s: Session) => Session) =>
-        set((st) => {
-          const next = fn(st.session)
-          return { session: !hasPlay(st.session) && hasPlay(next) ? { ...next, date: today() } : next }
-        })
+      const dated = (prev: Session, next: Session) => (!hasPlay(prev) && hasPlay(next) ? { ...next, date: today() } : next)
+      const updateSession = (fn: (s: Session) => Session) => set((st) => ({ session: dated(st.session, fn(st.session)) }))
 
       return {
         players: [],
         session: newSession(),
         history: [],
+        schedule: [],
 
         addPlayer: (name, skill, gender) =>
           set((st) => ({
@@ -520,6 +535,42 @@ export const useStore = create<State>()(
             s.timer ? { ...s, timer: { ...s.timer, minutes: Math.max(30, s.timer.minutes + minutes) } } : s,
           ),
         stopTimer: () => updateSession((s) => ({ ...s, timer: undefined })),
+
+        scheduleGames: (games) => {
+          const { schedule } = get()
+          const ok = games.every(
+            (g, i) => g.end > g.start && !clash(schedule, g.start, g.end) && !clash(games.slice(0, i).map((x, j) => ({ ...x, id: String(j) })), g.start, g.end),
+          )
+          if (ok) set((st) => ({ schedule: [...st.schedule, ...games.map((g) => ({ id: uid(), start: g.start, end: g.end }))] }))
+          return ok
+        },
+
+        rescheduleGame: (id, start, end) => {
+          if (end <= start || clash(get().schedule, start, end, id)) return false
+          set((st) => ({ schedule: st.schedule.map((g) => (g.id === id ? { ...g, start, end } : g)) }))
+          return true
+        },
+
+        unscheduleGame: (id) => set((st) => ({ schedule: st.schedule.filter((g) => g.id !== id) })),
+
+        startScheduled: (id) =>
+          set((st) => {
+            const game = st.schedule.find((g) => g.id === id)
+            if (!game || st.session.timer) return {}
+            const minutes = Math.round((game.end - game.start) / 60_000)
+            // Booked hours follow the game; older sessions with only a total fee keep it.
+            const booking = st.session.courtBooking && { ...st.session.courtBooking, hours: minutes / 60 }
+            const next: Session = {
+              ...st.session,
+              timer: { startedAt: game.start, minutes },
+              scheduled: { start: game.start, end: game.end },
+              ...(booking && { courtBooking: booking, courtFee: courtFeeOf(booking) }),
+            }
+            return { session: dated(st.session, next), schedule: st.schedule.filter((g) => g.id !== id) }
+          }),
+
+        dropEnded: (now) =>
+          set((st) => (st.schedule.some((g) => g.end <= now) ? { schedule: st.schedule.filter((g) => g.end > now) } : {})),
         setShuttlesStart: (typeId, n) =>
           updateSession((s) =>
             sessionStarted(s)
@@ -699,13 +750,14 @@ export const useStore = create<State>()(
 
         resetSession: () => set((st) => ({ session: newSession(st.session) })),
 
-        clearAll: () => set({ players: [], session: newSession(), history: [] }),
+        clearAll: () => set({ players: [], session: newSession(), history: [], schedule: [] }),
 
         importData: (data) =>
           set((st) => ({
             players: data.players ?? st.players,
             session: data.session ? withShuttleTypes(data.session) : st.session,
             history: data.history?.map(redate) ?? st.history,
+            schedule: data.schedule ?? st.schedule,
           })),
       }
     },

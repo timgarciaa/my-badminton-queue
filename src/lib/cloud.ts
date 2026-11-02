@@ -2,7 +2,7 @@ import { useEffect } from 'react'
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { newSession, useStore } from '../store/useStore'
-import type { Player, Session } from '../types'
+import type { Player, ScheduledGame, Session } from '../types'
 import { CHECKIN_API } from './remoteCheckin'
 
 /**
@@ -123,12 +123,15 @@ export interface ClubData {
   players: Player[]
   session: Session
   history: Session[]
+  /** Missing in data from before games could be scheduled. */
+  schedule?: ScheduledGame[]
 }
 
-/** players, session, and h#<id> for each past session, as JSON. */
+/** players, session, h#<id> for each past session, and schedule (when there is one), as JSON. */
 export function toDocs(d: ClubData): Record<string, string> {
   const docs: Record<string, string> = { players: JSON.stringify(d.players), session: JSON.stringify(d.session) }
   for (const s of d.history) docs[`h#${s.id}`] = JSON.stringify(s)
+  if (d.schedule?.length) docs.schedule = JSON.stringify(d.schedule)
   return docs
 }
 
@@ -145,6 +148,7 @@ export function fromDocs(docs: Record<string, string>): Partial<ClubData> & { pl
     players: docs.players ? JSON.parse(docs.players) : [],
     ...(docs.session && { session: JSON.parse(docs.session) as Session }),
     history,
+    schedule: docs.schedule ? (JSON.parse(docs.schedule) as ScheduledGame[]) : [],
   }
 }
 
@@ -291,7 +295,9 @@ export function useCloudSync() {
     void refreshWaiting()
     const requests = window.setInterval(() => document.visibilityState === 'visible' && void refreshWaiting(), 5 * 60_000)
     const unsubscribe = useStore.subscribe((st, prev) => {
-      if (st.players !== prev.players || st.session !== prev.session || st.history !== prev.history) scheduleSave()
+      if (st.players !== prev.players || st.session !== prev.session || st.history !== prev.history || st.schedule !== prev.schedule) {
+        scheduleSave()
+      }
     })
     const hidden = () => document.visibilityState === 'hidden' && void save()
     const online = () => scheduleSave(0)
