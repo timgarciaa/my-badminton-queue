@@ -14,6 +14,8 @@ const SWAP_REASON: Record<GameSwap['reason'], string> = {
   repeat: 'fresh partners',
   variety: 'new people',
   lopsided: 'more even game',
+  rest: 'a rest after 2 in a row',
+  fair: 'fair share of games',
 }
 
 export function GamesPage() {

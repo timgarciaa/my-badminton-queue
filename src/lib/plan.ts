@@ -11,8 +11,8 @@ export interface PlannedGame {
   manual?: boolean
   /** Id of the set game this is. */
   set?: string
-  /** A struggling player partnered with the player on the best win streak. */
-  help?: { player: string; partner: string; streak: number }
+  /** A struggling player partnered with the strongest player in the four. */
+  help?: { player: string; partner: string; rate: number }
 }
 
 export const setIds = (g: Pick<SetGame, 'teamA' | 'teamB'>) => [...g.teamA, ...g.teamB]

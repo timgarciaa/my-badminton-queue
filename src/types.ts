@@ -39,7 +39,7 @@ export interface GameSwap {
   in: string
   /** Player who was next up and now waits for the following game. */
   out: string
-  reason: 'rematch' | 'repeat' | 'variety' | 'lopsided'
+  reason: 'rematch' | 'repeat' | 'variety' | 'lopsided' | 'rest' | 'fair'
   /** A second player swapped in, when one swap couldn't avoid a repeat partnership. */
   also?: { in: string; out: string }
 }

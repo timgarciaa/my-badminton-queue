@@ -280,16 +280,42 @@ export function gameTime(g: Game): string {
 /** A player who lost this many decided games in a row (and won none of them) gets a helping partner. */
 export const WINLESS_RUN = 5
 
+/** Last session, below this win rate (over at least HELP_MIN_GAMES decided games) gets a helping partner. */
+export const LOSING_RATE = 0.4
+/** Helpers win at least this often, over at least HELP_MIN_GAMES decided games. */
+export const STRONG_RATE = 0.55
+export const HELP_MIN_GAMES = 3
+
 /**
- * Who to help and who can help, from recent games: players whose last
- * WINLESS_RUN decided games were all losses, and every player's current win
- * streak. Games with no result are skipped.
+ * Who to help and who can help. Struggling: players who lost most of their
+ * games last session (won under LOSING_RATE), or their last WINLESS_RUN
+ * decided games; a winning record today ends it. Helpers: the win rate of
+ * players who win at least STRONG_RATE of their recent games. Games with no
+ * result are skipped.
  */
-export function helpFrom(games: Game[]): Help {
-  const runs = streaks(games)
-  const struggling = new Set([...runs].filter(([, r]) => r.current <= -WINLESS_RUN).map(([id]) => id))
-  const streak = new Map([...runs].filter(([, r]) => r.current > 0).map(([id, r]) => [id, r.current]))
-  return { struggling, streak }
+export function helpFrom(recent: Game[], lastSession: Game[] = [], today: Game[] = []): Help {
+  const runs = streaks(recent)
+  const decided = (r: PlayerRecord) => r.wins + r.losses
+  const last = playerRecords(lastSession)
+  const now = playerRecords(today)
+  const lostLast = (id: string) => {
+    const r = last.get(id)
+    return !!r && decided(r) >= HELP_MIN_GAMES && r.wins / decided(r) < LOSING_RATE
+  }
+  const winningToday = (id: string) => {
+    const r = now.get(id)
+    return !!r && r.wins > r.losses
+  }
+  const ids = new Set([...runs.keys(), ...last.keys()])
+  const struggling = new Set(
+    [...ids].filter((id) => ((runs.get(id)?.current ?? 0) <= -WINLESS_RUN || lostLast(id)) && !winningToday(id)),
+  )
+  const strength = new Map(
+    [...playerRecords(recent)]
+      .filter(([id, r]) => decided(r) >= HELP_MIN_GAMES && r.wins / decided(r) >= STRONG_RATE && !struggling.has(id))
+      .map(([id, r]) => [id, r.wins / decided(r)]),
+  )
+  return { struggling, strength }
 }
 
 /** Who checked in first and last in one session. */

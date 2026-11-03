@@ -6,7 +6,7 @@ import { heldIds, isSetReady, setIds } from '../lib/plan'
 import { applySwap, dequeue, enqueue, move, placeByArrival, pushFront, swap } from '../lib/queue'
 import { scoreLeader } from '../lib/stats'
 import { clash } from '../lib/schedule'
-import type { CourtBooking, Game, GameSwap, Gender, Pair, Player, ScheduledGame, Session, SetGame, ShuttleType, Skill } from '../types'
+import type { Attendee, CourtBooking, Game, GameSwap, Gender, Pair, Player, ScheduledGame, Session, SetGame, ShuttleType, Skill } from '../types'
 
 /** A check-in made on a player's phone; ids starting with new- are names not on the list. */
 export interface PhoneCheckin {
@@ -90,14 +90,17 @@ export function newSession(
   }
 }
 
-/** Check a player in (once), at the back of the queue. */
+/** Arrival times of checked-in players who haven't played yet. */
+const newcomers = (attendees: Attendee[]) => new Map(attendees.filter((a) => a.gamesPlayed === 0).map((a) => [a.playerId, a.checkedInAt]))
+
+/**
+ * Check a player in (once). They queue by arrival time among players who
+ * haven't played yet (a phone check-in may be accepted late), else at the back.
+ */
 function addAttendee(s: Session, playerId: string, at: number): Session {
   if (s.attendees.some((a) => a.playerId === playerId)) return s
-  return {
-    ...s,
-    attendees: [...s.attendees, { playerId, checkedInAt: at, gamesPlayed: 0, paid: false, resting: false }],
-    queue: enqueue(s.queue, [playerId]),
-  }
+  const attendees = [...s.attendees, { playerId, checkedInAt: at, gamesPlayed: 0, paid: false, resting: false }]
+  return { ...s, attendees, queue: placeByArrival(enqueue(s.queue, [playerId]), playerId, newcomers(attendees)) }
 }
 
 /** Six letters and digits for the check-in link, without look-alikes (0/O, 1/I). */
@@ -435,18 +438,16 @@ export const useStore = create<State>()(
             if (!attendee) return s
             const attendees = s.attendees.map((a) => (a.playerId === playerId ? { ...a, checkedInAt: at } : a))
             if (attendee.gamesPlayed > 0) return { ...s, attendees }
-            const newcomers = new Map(attendees.filter((a) => a.gamesPlayed === 0).map((a) => [a.playerId, a.checkedInAt]))
-            return { ...s, attendees, queue: placeByArrival(s.queue, playerId, newcomers) }
+            return { ...s, attendees, queue: placeByArrival(s.queue, playerId, newcomers(attendees)) }
           }),
 
         setResting: (playerId, resting) =>
           updateSession((s) => {
             const onCourt = s.games.some((g) => !g.endedAt && [...g.teamA, ...g.teamB].includes(playerId))
-            return {
-              ...s,
-              attendees: s.attendees.map((a) => (a.playerId === playerId ? { ...a, resting } : a)),
-              queue: resting ? dequeue(s.queue, [playerId]) : onCourt ? s.queue : enqueue(s.queue, [playerId]),
-            }
+            const attendees = s.attendees.map((a) => (a.playerId === playerId ? { ...a, resting } : a))
+            // Back from a rest before playing: their place by arrival, not the back.
+            const back = () => placeByArrival(enqueue(s.queue, [playerId]), playerId, newcomers(attendees))
+            return { ...s, attendees, queue: resting ? dequeue(s.queue, [playerId]) : onCourt ? s.queue : back() }
           }),
 
         togglePaid: (playerId) =>

@@ -9,6 +9,8 @@ const SWAP_REASON: Record<GameSwap['reason'], string> = {
   repeat: " so partners don't repeat",
   variety: ' so they play with new people',
   lopsided: ' for a more even game',
+  rest: ' so players get a rest after 2 games in a row',
+  fair: ' so everyone gets a fair share of games',
 }
 
 interface Drag {
@@ -166,8 +168,8 @@ export function QueuePanel({
           )}
           {next.help && (
             <p role="status" className="d-alert d-alert-success d-alert-soft mt-2 block px-2.5 py-1.5 text-xs">
-              <strong>{name(next.help.player)}</strong> teams up with <strong>{name(next.help.partner)}</strong>, on{' '}
-              {next.help.streak === 1 ? 'a win' : `${next.help.streak} wins in a row`}.
+              <strong>{name(next.help.player)}</strong> teams up with <strong>{name(next.help.partner)}</strong>, who wins{' '}
+              {Math.round(next.help.rate * 100)}% of games.
             </p>
           )}
           <p className="mt-2 px-1 text-xs text-slate-400">
@@ -397,14 +399,14 @@ function SkillMatchToggle() {
   )
 }
 
-/** On: a player with no wins in their last 5 games partners the player on the best win streak in their four. */
+/** On: a player who lost most games last session (or their last 5) partners the strongest player in their four. */
 function HelpToggle() {
   const on = useStore((s) => isHelpStruggling(s.session))
   const setHelpStruggling = useStore((s) => s.setHelpStruggling)
   return (
     <label
       className="flex cursor-pointer items-center gap-1.5 text-xs font-medium whitespace-nowrap text-slate-500"
-      title="On: a player who hasn't won in their last 5 games (last 3 months) partners whoever in their four is on the best win streak. Never repeats a partner, never changes the queue order."
+      title="On: a player who lost most of their games last session, or their last 5, partners whoever in their four has the best win rate (last 3 months). Ends once they're winning today. Never repeats a partner, never changes the queue order."
     >
       Help losing players
       <input

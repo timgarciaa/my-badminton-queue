@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Session } from '../types'
-import { bumpedPlayers, meetCounts, metPairs, pairKey, partnerCounts, splitTeams, suggestSwap } from './balance'
+import { bumpedPlayers, fairShare, meetCounts, metPairs, pairKey, partnerCounts, playStreaks, splitTeams, suggestSwap } from './balance'
 import { costSummary, courtBooking, money, sessionStarted, shuttleCount, shuttlesInStock } from './cost'
 import type { Help } from './balance'
 import { parseNames } from './importNames'
@@ -806,12 +806,12 @@ describe('helping players without a win', () => {
       shuttles: 0,
       winner,
     }) as Session['games'][number]
-  const help = (struggling: string[], streak: Record<string, number>): Help => ({
+  const help = (struggling: string[], strength: Record<string, number>): Help => ({
     struggling: new Set(struggling),
-    streak: new Map(Object.entries(streak)),
+    strength: new Map(Object.entries(strength)),
   })
 
-  it('finds players who lost their last 5 decided games, and current win streaks', () => {
+  it('finds players who lost their last 5 decided games, and strong players', () => {
     // s loses 5 in a row (a game with no result in between is skipped); w wins the last 3.
     const games = [
       game('sx', 'wy', 'A'),
@@ -824,19 +824,33 @@ describe('helping players without a win', () => {
     ]
     const h = helpFrom(games)
     expect([...h.struggling]).toEqual(['s'])
-    expect(h.streak.get('w')).toBe(5)
-    expect(h.streak.has('s')).toBe(false)
+    // w won 5 of 6 decided games; s is struggling, so never a helper.
+    expect(h.strength.get('w')).toBeCloseTo(5 / 6)
+    expect(h.strength.has('s')).toBe(false)
     // 4 losses in a row is not enough.
     expect(helpFrom(games.slice(0, 6)).struggling.has('s')).toBe(false)
     // A win ends it.
     expect(helpFrom([...games, game('sw', 'xy', 'A')]).struggling.has('s')).toBe(false)
   })
 
-  it('partners a struggling player with the player on the best win streak, over even skill', () => {
-    // a(5) b(4) c(2) d(1): skill alone pairs a+d, b+c. d is struggling, b is on 3 wins, a on 1.
-    const split = splitTeams(['a', 'b', 'c', 'd'], skillOf, { help: help(['d'], { a: 1, b: 3 }) })
+  it('finds players who lost most games last session, until they win more than they lose today', () => {
+    // Last session: s won 1 of 4 (25%), x 2 of 4 (50%).
+    const last = [game('sx', 'wy', 'B'), game('sx', 'wy', 'B'), game('sx', 'wy', 'A'), game('sy', 'wx', 'B')]
+    expect([...helpFrom(last, last).struggling]).toEqual(['s'])
+    // Too few games last session to tell.
+    expect(helpFrom(last.slice(0, 2), last.slice(0, 2)).struggling.size).toBe(0)
+    // Today: a loss and a win still needs help; two wins and a loss doesn't.
+    const today = [game('sz', 'wy', 'B'), game('sz', 'wy', 'A')]
+    expect(helpFrom([...last, ...today], last, today).struggling.has('s')).toBe(true)
+    const better = [...today, game('sz', 'wy', 'A')]
+    expect(helpFrom([...last, ...better], last, better).struggling.has('s')).toBe(false)
+  })
+
+  it('partners a struggling player with the strongest player in the four, over even skill', () => {
+    // a(5) b(4) c(2) d(1): skill alone pairs a+d, b+c. d is struggling, b wins 80%, a 60%.
+    const split = splitTeams(['a', 'b', 'c', 'd'], skillOf, { help: help(['d'], { a: 0.6, b: 0.8 }) })
     expect([pairKey(split.teamA), pairKey(split.teamB)].sort()).toEqual(['a|c', 'b|d'])
-    expect(split.helped).toEqual({ player: 'd', partner: 'b', streak: 3 })
+    expect(split.helped).toEqual({ player: 'd', partner: 'b', rate: 0.8 })
     // No one on a streak, or nobody struggling: skill decides as before.
     for (const h of [help(['d'], {}), help([], { b: 3 })]) {
       const s = splitTeams(['a', 'b', 'c', 'd'], skillOf, { help: h })
@@ -847,7 +861,7 @@ describe('helping players without a win', () => {
 
   it('never repeats a partner to help', () => {
     const split = splitTeams(['a', 'b', 'c', 'd'], skillOf, {
-      help: help(['d'], { b: 3 }),
+      help: help(['d'], { b: 0.8 }),
       partners: new Map([['b|d', 1]]),
     })
     expect(split.repeats).toBe(0)
@@ -857,13 +871,13 @@ describe('helping players without a win', () => {
   it('leaves the queue order and swaps alone, only choosing partners', () => {
     // Lopsided: b moves up for d with or without help; g, still in the four, is helped.
     const queue = ['a', 'd', 'g', 'h', 'b']
-    const h = help(['g'], { b: 2 })
+    const h = help(['g'], { b: 0.7 })
     const without = planGames(queue, skillOf)
     const withHelp = planGames(queue, skillOf, { help: h })
     expect(withHelp.games[0].swap).toEqual(without.games[0].swap)
     expect(withHelp.order.slice(4)).toEqual(without.order.slice(4))
     expect(withHelp.games[0].swap).toMatchObject({ in: 'b', out: 'd' })
-    expect(withHelp.games[0].help).toEqual({ player: 'g', partner: 'b', streak: 2 })
+    expect(withHelp.games[0].help).toEqual({ player: 'g', partner: 'b', rate: 0.7 })
     expect(without.games[0].help).toBeUndefined()
   })
 
@@ -902,7 +916,7 @@ describe('data saved by the app already in use', () => {
     expect(isHelpStruggling(saved)).toBe(true)
     expect(isSkillMatch(saved)).toBe(false)
     expect(standings(playedGames([saved])).map((r) => r.id)).toEqual(['a', 'b', 'c', 'd'])
-    expect(helpFrom(playedGames([saved])).streak.get('a')).toBe(1)
+    expect(helpFrom(playedGames([saved])).struggling.size).toBe(0)
     const next = newSession(saved)
     expect(next).toMatchObject({ courtFee: 1860, skillMatch: false })
     expect(next.courtBooking).toBeUndefined()
@@ -1483,5 +1497,110 @@ describe('blowout games', () => {
     const unfinished = g([15, 2], { winner: undefined, outOfHours: true })
     expect(blowoutGames([older, newer, unfinished]).map((x) => x.id)).toEqual([newer.id, older.id])
     expect(blowoutGames([g([21, 12])])).toEqual([])
+  })
+})
+
+describe('rest, early arrivals and last session', () => {
+  let t = 0
+  // Games 10 minutes long; `at` is the start in minutes.
+  const game = (teamA: string, teamB: string, at: number, ended = true) =>
+    ({ id: `r${++t}`, court: 1, teamA: teamA.split(''), teamB: teamB.split(''), startedAt: at * 60_000, ...(ended && { endedAt: (at + 10) * 60_000 }), shuttles: 0 }) as Session['games'][number]
+  const even = () => 3
+
+  it('counts games played in a row, until a game starts without the player', () => {
+    // a plays at 0 and 10 with no game starting in between: 2 in a row. e rested (sat out 10).
+    const games = [game('ab', 'cd', 0), game('ef', 'gh', 5), game('ai', 'jk', 15), game('ej', 'lm', 25)]
+    const runs = playStreaks(games)
+    expect(runs.get('a')).toBeUndefined() // e's game at 25 started after a's ended: a has rested
+    expect(runs.get('e')).toBe(1)
+    const back = [game('ab', 'cd', 0), game('ab', 'ef', 10)]
+    expect(playStreaks(back).get('a')).toBe(2)
+    expect(playStreaks([...back, game('gh', 'ij', 20)]).has('a')).toBe(false)
+  })
+
+  it('rests a player after 2 games in a row when someone else can play', () => {
+    const played = new Map([['a', 2]])
+    const idea = suggestSwap(['a', 'b', 'c', 'd', 'e'], even, { played })
+    expect(idea).toMatchObject({ out: 'a', in: 'e', reason: 'rest' })
+    // Never moved up while tired; with nobody else, they play.
+    expect(suggestSwap(['b', 'c', 'd', 'e', 'a'], even, { played, met: new Map([['b|c', 1]]) })?.in).not.toBe('a')
+    expect(suggestSwap(['a', 'b', 'c', 'd'], even, { played })).toBeNull()
+  })
+
+  it('prefers moving up someone who has rested', () => {
+    // b and c met before; e just played, f has rested.
+    const idea = suggestSwap(['a', 'b', 'c', 'd', 'e', 'f'], even, { met: new Map([['b|c', 1]]), played: new Map([['e', 1]]) })
+    expect(idea?.in).toBe('f')
+  })
+
+  it("never moves back players who haven't played yet", () => {
+    const met = new Map([['b|c', 1]])
+    expect(suggestSwap(['a', 'b', 'c', 'd', 'e'], even, { met })).not.toBeNull()
+    expect(suggestSwap(['a', 'b', 'c', 'd', 'e'], even, { met, keep: new Set(['a', 'b', 'c', 'd']) })).toBeNull()
+  })
+
+  it('never moves someone up for a player who has played fewer games', () => {
+    // b and c met before, so a swap helps; only e and f are further back.
+    const met = new Map([['b|c', 1]])
+    const games = new Map([['a', 3], ['b', 3], ['c', 3], ['d', 3], ['e', 5], ['f', 4]])
+    expect(suggestSwap(['a', 'b', 'c', 'd', 'e', 'f'], even, { met, games })).toBeNull()
+    // With someone on fewer games further back, they move up.
+    games.set('f', 2)
+    expect(suggestSwap(['a', 'b', 'c', 'd', 'e', 'f'], even, { met, games })?.in).toBe('f')
+    // A rest still comes first: a played 2 in a row, e moves up though on more games.
+    const rest = suggestSwap(['a', 'b', 'c', 'd', 'e'], even, { games, played: new Map([['a', 2]]) })
+    expect(rest).toMatchObject({ out: 'a', in: 'e', reason: 'rest' })
+  })
+
+  it('moves up a player 2 games behind, even when nothing else needs a swap', () => {
+    const games = new Map([['a', 4], ['b', 4], ['c', 4], ['d', 4], ['e', 3], ['f', 2]])
+    expect(suggestSwap(['a', 'b', 'c', 'd', 'e', 'f'], even, { games })).toMatchObject({ in: 'f', reason: 'fair' })
+    // One game behind is the normal rotation.
+    games.set('f', 3)
+    expect(suggestSwap(['a', 'b', 'c', 'd', 'e', 'f'], even, { games })).toBeNull()
+  })
+
+  it('credits late arrivals with their share of the games before they came', () => {
+    // 8 players; 4 games started before l arrived at minute 35: 4 × 4 / 8 = 2 games' worth.
+    const games = [game('ab', 'cd', 0), game('ef', 'gh', 0), game('ab', 'cd', 15), game('ef', 'gh', 15)]
+    const at = (id: string, min: number) => ({ playerId: id, checkedInAt: min * 60_000 })
+    const share = fairShare(games, [...'abcdefg'].map((id) => at(id, 0)).concat(at('l', 35)))
+    expect(share.get('a')).toBe(2)
+    expect(share.get('l')).toBe(2)
+  })
+
+  it('prefers moving up whoever has played fewest', () => {
+    const met = new Map([['b|c', 1]])
+    const games = new Map([['a', 3], ['b', 3], ['c', 3], ['d', 3], ['e', 3], ['f', 1]])
+    expect(suggestSwap(['a', 'b', 'c', 'd', 'e', 'f'], even, { met, games })?.in).toBe('f')
+  })
+
+  it("prefers partners who weren't teammates last session", () => {
+    // Even skill: any split works; a+b and a+c were partners last session.
+    const split = splitTeams(['a', 'b', 'c', 'd'], even, { lastPartners: new Map([['a|b', 1], ['a|c', 1]]) })
+    expect([pairKey(split.teamA), pairKey(split.teamB)].sort()).toEqual(['a|d', 'b|c'])
+    expect(split.lastRepeats).toBe(0)
+    // A repeat partner today still matters more.
+    const today = splitTeams(['a', 'b', 'c', 'd'], even, { lastPartners: new Map([['a|b', 1], ['a|c', 1]]), partners: new Map([['a|d', 1]]) })
+    expect(today.repeats).toBe(0)
+  })
+
+  it('queues players by arrival time until they play', () => {
+    const s = useStore.getState()
+    s.clearAll()
+    const ids = ['p', 'q', 'r'].map((n) => {
+      useStore.getState().addPlayer(n, 3, 'M')
+      return useStore.getState().players.at(-1)!.id
+    })
+    const [p, q, r] = ids
+    useStore.getState().checkIn(p, 3000)
+    useStore.getState().checkIn(q, 2000) // accepted later, arrived earlier
+    useStore.getState().checkIn(r, 1000)
+    expect(useStore.getState().session.queue).toEqual([r, q, p])
+    // Back from a rest before playing: their place, not the back.
+    useStore.getState().setResting(r, true)
+    useStore.getState().setResting(r, false)
+    expect(useStore.getState().session.queue).toEqual([r, q, p])
+    useStore.getState().clearAll()
   })
 })

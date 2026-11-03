@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { allSplits, bumpedPlayers, meetCounts, partnerCounts } from '../lib/balance'
+import { allSplits, bumpedPlayers, fairShare, meetCounts, partnerCounts, playStreaks } from '../lib/balance'
 import { gameShuttleType, shuttlesInStock } from '../lib/cost'
 import { matchSkill, planGames, winnersStayGame } from '../lib/plan'
 import { QueuePanel } from '../components/QueuePanel'
@@ -16,6 +16,8 @@ const SWAP_REASON_SHORT: Record<GameSwap['reason'], string> = {
   repeat: ' · fresh partners',
   variety: ' · new people',
   lopsided: ' · more even game',
+  rest: ' · a rest after 2 in a row',
+  fair: ' · fair share of games',
 }
 
 
@@ -49,18 +51,35 @@ function useWidth<T extends HTMLElement>() {
   return [ref, width] as const
 }
 
+/** The latest finished session before this one with games in it. */
+function lastSession(session: Session, history: Session[]): Session | undefined {
+  return history
+    .filter((s) => s.id !== session.id && s.games.some((g) => g.endedAt))
+    .reduce<Session | undefined>((a, s) => (!a || s.date > a.date ? s : a), undefined)
+}
+
 /**
  * Plan the next game exactly as the queue shows it and Next game starts it.
- * Help for struggling players looks at the last 3 months, today included.
+ * Help for struggling players looks at last session and the last 3 months, today included.
  */
 function planNext(session: Session, players: Map<string, Player>, history: Session[]) {
-  const help = isHelpStruggling(session) ? helpFrom(playedGames(sessionsWithin([session, ...history], 3))) : undefined
+  const last = lastSession(session, history)
+  const lastGames = last ? playedGames([last]) : []
+  const help = isHelpStruggling(session)
+    ? helpFrom(playedGames(sessionsWithin([session, ...history], 3)), lastGames, playedGames([session]))
+    : undefined
+  const played = new Set(session.games.flatMap((g) => [...g.teamA, ...g.teamB]))
   return planGames(
     session.queue,
     matchSkill((id) => players.get(id)?.skill ?? 3, isSkillMatch(session)),
     {
       partners: partnerCounts(session.games),
+      lastPartners: partnerCounts(lastGames),
       met: meetCounts(session.games),
+      played: playStreaks(session.games),
+      games: fairShare(session.games, session.attendees),
+      // Early arrivals who haven't played yet keep their place.
+      keep: new Set(session.queue.filter((id) => !played.has(id))),
       genderOf: (id) => players.get(id)?.gender,
       autoSwap: !session.locked?.length,
       locked: bumpedPlayers(session.games),
