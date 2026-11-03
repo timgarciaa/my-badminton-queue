@@ -10,6 +10,7 @@ import { findPlayer, publicPath } from './publicStats'
 import { matchSkill, planGames, winnersStayGame } from './plan'
 import { arrivals, bestRecord, blowoutGames, deuceGames, scoreLeader, checkinPlaces, checkinStandings, duoRecords, form, mateRecords, mostOften, gameExtremes, gameTime, helpFrom, ordinal, places, playedGames, sessionsWithin, standings, playerRecords, rivalries, streaks, winRate, worstRecord } from './stats'
 import { dequeue, enqueue, move, nextFour, placeByArrival, pushFront, swap } from './queue'
+import { gapCounts, niceTicks, overall, playerDays, sessionTrend, sessionTrends } from './trends'
 import { isHelpStruggling, isSkillMatch, migrateStore, newSession, playedOn, redate, useStore } from '../store/useStore'
 
 const skills: Record<string, number> = { a: 5, b: 4, c: 2, d: 1, e: 3, f: 3, g: 1, h: 1 }
@@ -1602,5 +1603,57 @@ describe('rest, early arrivals and last session', () => {
     useStore.getState().setResting(r, false)
     expect(useStore.getState().session.queue).toEqual([r, q, p])
     useStore.getState().clearAll()
+  })
+})
+
+describe('graph numbers', () => {
+  const M = 60_000
+  const start = new Date('2026-11-02T16:00').getTime()
+  let n = 0
+  const game = (teamA: string, teamB: string, at: number, len: number, score?: [number, number]) =>
+    ({ id: `t${++n}`, court: 1, teamA: teamA.split(''), teamB: teamB.split(''), startedAt: start + at * M, endedAt: start + (at + len) * M, shuttles: 0, ...(score && { score, winner: score[0] > score[1] ? 'A' : 'B' }) }) as Session['games'][number]
+  const att = (id: string, min: number) => ({ playerId: id, checkedInAt: start + min * M, gamesPlayed: 0, paid: false, resting: false })
+  // a..d play at 0 (10 min, 21-15); a,b,e,f at 15 (20 min, 23-21); e,f arrived late.
+  const session = {
+    ...newSession(),
+    id: 's',
+    date: '2026-11-02',
+    attendees: [att('a', -10), att('b', -6), att('c', -2), att('d', 0), att('e', 5), att('f', 10)],
+    games: [game('ab', 'cd', 0, 10, [21, 15]), game('ab', 'ef', 15, 20, [21, 23]), game('cd', 'xy', 40, 5)],
+    status: 'closed',
+  } as Session
+
+  it('averages a session', () => {
+    const t = sessionTrend(session)
+    expect(t.gameMin).toBeCloseTo(35 / 3)
+    expect(t.earlyMin).toBeCloseTo((10 + 6 + 2 + 0 - 5 - 10) / 6)
+    expect(t.gap).toBe(4) // 6 and 2
+    expect(t.scored).toBe(2)
+    // 2, 2, 2, 2, 1 and 1 games.
+    expect(t.perPlayer).toEqual({ avg: 10 / 6, min: 1, max: 2 })
+    // a and b waited 5 min (10 to 15); c and d 30 min (10 to 40).
+    expect(t.waitMin).toBeCloseTo(17.5)
+  })
+
+  it('lists players in check-in order, and sessions oldest first', () => {
+    const days = playerDays(session)
+    expect(days.map((d) => d.id)).toEqual(['a', 'b', 'c', 'd', 'e', 'f'])
+    expect(days[5]).toMatchObject({ games: 1, earlyMin: -10, waitMin: null })
+    const older = { ...session, id: 'o', date: '2026-10-30' }
+    const empty = { ...session, id: 'none', date: '2026-11-03', games: [] }
+    expect(sessionTrends([session, empty, older]).map((t) => t.id)).toEqual(['o', 's'])
+    expect(overall([session, older])).toMatchObject({ sessions: 2, scored: 4, gap: 4 })
+  })
+
+  it('groups score gaps and picks round axis ticks', () => {
+    expect(gapCounts(session.games)).toEqual([
+      { label: '1–2', count: 1 },
+      { label: '3–5', count: 0 },
+      { label: '6–9', count: 1 },
+      { label: '10+', count: 0 },
+    ])
+    expect(niceTicks(0, 17)).toEqual([0, 5, 10, 15, 20])
+    expect(niceTicks(-7, 12)).toEqual([-10, -5, 0, 5, 10, 15])
+    expect(niceTicks(0, 0)).toEqual([0, 1])
   })
 })

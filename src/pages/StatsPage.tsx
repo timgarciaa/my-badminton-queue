@@ -22,6 +22,7 @@ import {
   worstRecord,
   type PlayerRecord,
 } from '../lib/stats'
+import { GraphView } from '../components/GraphView'
 import { PlayerStats } from '../components/PlayerStats'
 import { SessionSelect } from '../components/SessionSelect'
 import { PlaceCell, ShareIcon, Standings } from '../components/Standings'
@@ -40,14 +41,15 @@ const record = (r: PlayerRecord) => `${r.wins}–${r.losses}`
 /**
  * Analytics over past sessions: pick all time, the last 3 months or one
  * session. Overview shows its summary, awards (best and worst duos, streaks,
- * rivalries) and tables; Players shows one player's own stats.
+ * rivalries) and tables; Players shows one player's own stats; Graph charts
+ * game time, check-in, score gaps and more.
  */
 export function StatsPage() {
   const session = useStore((s) => s.session)
   const history = useStore((s) => s.history)
   const players = usePlayerMap()
   const { scope, setScope, all, recent, sessions, span, label } = useScope(session, history)
-  const [view, setView] = useState<'overview' | 'players'>('overview')
+  const [view, setView] = useState<'overview' | 'players' | 'graph'>('overview')
   const [chosen, setChosen] = useState<string | null>(null)
   const games = playedGames(sessions)
   const name = (id: string) => players.get(id)?.name ?? 'Removed player'
@@ -58,7 +60,7 @@ export function StatsPage() {
       <div className="flex flex-wrap items-center gap-3 px-5 pt-5 pb-4">
         <h2 className="text-xl font-bold">Stats</h2>
         <div role="tablist" className="d-tabs d-tabs-box">
-          {(['overview', 'players'] as const).map((v) => (
+          {(['overview', 'players', 'graph'] as const).map((v) => (
             <button
               key={v}
               role="tab"
@@ -66,7 +68,7 @@ export function StatsPage() {
               className={`d-tab h-10 px-5 font-semibold ${view === v ? 'd-tab-active' : ''}`}
               onClick={() => setView(v)}
             >
-              {v === 'overview' ? 'Overview' : 'Players'}
+              {v === 'overview' ? 'Overview' : v === 'players' ? 'Players' : 'Graph'}
             </button>
           ))}
         </div>
@@ -94,6 +96,10 @@ export function StatsPage() {
         </div>
       ) : view === 'players' ? (
         <PlayerStats sessions={sessions} scope={label} showDate={span} chosen={chosen} onChoose={setChosen} />
+      ) : view === 'graph' ? (
+        <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-5">
+          <GraphView sessions={sessions} name={name} />
+        </div>
       ) : (
         <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-5 pb-5">
           <Overview sessions={sessions} />
