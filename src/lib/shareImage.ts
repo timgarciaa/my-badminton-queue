@@ -368,12 +368,11 @@ export function standingsImage(rows: StandingRow[], { title, subtitle }: { title
   return png(c)
 }
 
-/** One podium place on the season image: who (tied players share it) and their record. */
-export interface PodiumSpot {
-  place: number
-  names: string[]
-  record: string
-  detail: string
+/** A smaller highlight under the award cards on the season image. */
+export interface SeasonChip {
+  title: string
+  who: string
+  value: string
 }
 
 export interface SeasonCard {
@@ -381,97 +380,182 @@ export interface SeasonCard {
   dates: string
   /** Label and value, e.g. ['Sessions', '12']. */
   totals: [string, string][]
-  podium: PodiumSpot[]
+  /** Award cards, drawn as on the dashboard: the top three, then highlights (up to 6). */
+  cards: AwardCard[]
+  /** More highlights, as chips under the cards (up to 3). */
+  chips: SeasonChip[]
   rows: StandingRow[]
 }
 
-const SEASON_TOTALS = 170
-const SEASON_PODIUM = 340
+/** iPad Pro screen, landscape. */
+export const SEASON_SIZE = { width: 2732, height: 2048 }
 
 /**
- * A season's recap as a PNG: its name and dates, the totals, the top three,
- * then everyone's standings.
+ * A season's recap as an iPad-sized landscape PNG: its name, dates and totals
+ * across the top; the award cards (top three and highlights) on the left; and
+ * everyone's standings on the right.
  */
-export function seasonImage({ name, dates, totals, podium, rows }: SeasonCard): Blob {
-  const tableY = HEAD + SEASON_TOTALS + (podium.length ? SEASON_PODIUM : 0) + 70
-  const [c, ctx] = canvas(W, tableY + 20 + rows.length * ROW + FOOT)
+export function seasonImage({ name, dates, totals, cards, chips, rows }: SeasonCard): Blob {
+  const { width: SW, height: SH } = SEASON_SIZE
+  const [c, ctx] = canvas(SW, SH)
   const text = writer(ctx)
+  const M = 80
+  const panelW = 760
+  const gap = 40
+  const left = SW - M * 2 - 60 - panelW
+  const bodyY = 380
+  const bodyEnd = SH - 90
 
-  ctx.fillStyle = '#ffffff'
-  ctx.fillRect(0, 0, W, c.height)
-  const head = ctx.createLinearGradient(0, 0, W, HEAD)
-  head.addColorStop(0, '#312e81')
-  head.addColorStop(0.55, '#4338ca')
-  head.addColorStop(1, '#0d9488')
-  ctx.fillStyle = head
-  ctx.fillRect(0, 0, W, HEAD)
-  ctx.save()
-  ctx.beginPath()
-  ctx.rect(0, 0, W, HEAD)
-  ctx.clip()
-  court(ctx, 640, -120, 300, 620, -0.35, 'rgba(255,255,255,0.16)', 4)
-  confetti(ctx, 560, 10, 500, HEAD - 20, ['#fde68a', '#ffffff', '#99f6e4', '#c7d2fe'], 26, 5)
-  flyingShuttle(ctx, 985, 70, 150, '#4338ca', 'rgba(255,255,255,0.35)')
-  ctx.restore()
+  // A night-court background: deep indigo to teal, court lines and confetti.
+  const bg = ctx.createLinearGradient(0, 0, SW, SH)
+  bg.addColorStop(0, '#0f172a')
+  bg.addColorStop(0.5, '#1e1b4b')
+  bg.addColorStop(1, '#134e4a')
+  ctx.fillStyle = bg
+  ctx.fillRect(0, 0, SW, SH)
+  court(ctx, 1500, -500, 900, 2900, -0.5, 'rgba(255,255,255,0.06)', 8)
+  confetti(ctx, 900, 20, 1000, 320, ['#fde68a', '#ffffff', '#99f6e4', '#c7d2fe', '#fda4af'], 60, 9)
+  flyingShuttle(ctx, 1250, 175, 150, '#4338ca', 'rgba(255,255,255,0.3)')
 
+  // Header: brand, season name and dates; totals on the right.
   ctx.textBaseline = 'alphabetic'
-  text(brand(), PAD, 76, 28, 'rgba(255,255,255,0.8)')
-  ctx.font = `800 66px ${FONT}`
-  text(fit(ctx, name, 760), PAD, 160, 66, '#ffffff', 800)
-  text(dates, PAD, 214, 30, 'rgba(255,255,255,0.88)', 500)
-
-  // Totals: one tile each.
-  const gap = 20
-  const tileW = (W - PAD * 2 - gap * (totals.length - 1)) / totals.length
-  const tileY = HEAD + 36
+  text(brand().toUpperCase(), M, 110, 34, 'rgba(255,255,255,0.7)', 700)
+  ctx.font = `900 132px ${FONT}`
+  text(fit(ctx, name, 1060), M, 245, 132, '#ffffff', 900)
+  text(dates, M, 318, 50, '#99f6e4', 600)
+  const tileW = 290
+  const tileGap = 22
+  const tilesX = SW - M - totals.length * tileW - (totals.length - 1) * tileGap
   totals.forEach(([label, value], i) => {
-    const x = PAD + i * (tileW + gap)
-    ctx.fillStyle = '#f1f5f9'
+    const x = tilesX + i * (tileW + tileGap)
+    ctx.fillStyle = 'rgba(255,255,255,0.1)'
+    ctx.strokeStyle = 'rgba(255,255,255,0.18)'
+    ctx.lineWidth = 2
     ctx.beginPath()
-    ctx.roundRect(x, tileY, tileW, 104, 20)
+    ctx.roundRect(x, 150, tileW, 170, 28)
     ctx.fill()
-    ctx.textBaseline = 'alphabetic'
-    text(value, x + 24, tileY + 58, 44, '#0f172a', 800)
-    text(label, x + 24, tileY + 88, 22, '#64748b', 600)
+    ctx.stroke()
+    text(value, x + 34, 248, 76, '#ffffff', 900)
+    text(label.toUpperCase(), x + 34, 292, 26, 'rgba(255,255,255,0.7)', 700)
   })
 
-  // The podium: 1st, 2nd and 3rd side by side.
-  if (podium.length) {
-    const top = HEAD + SEASON_TOTALS + 10
-    const cardW = (W - PAD * 2 - gap * 2) / 3
-    const titles: Record<number, string> = { 1: 'Champion', 2: 'Runner-up', 3: 'Third place' }
-    podium.forEach((p, i) => {
-      const x = PAD + i * (cardW + gap)
-      const [fill, line] = MEDALS[p.place] ?? ['#f1f5f9', '#cbd5e1']
-      ctx.fillStyle = fill + '33'
-      ctx.strokeStyle = line
-      ctx.lineWidth = 3
+  // Award cards, three across in two rows, as on the dashboard, leaving room for the chips.
+  const chipRoom = chips.length ? 150 + gap : 0
+  const cardH = Math.min(((left - gap * 2) / 3) * (AWARD_SIZE.height / AWARD_SIZE.width), (bodyEnd - bodyY - gap - chipRoom) / 2)
+  const cardW = cardH * (AWARD_SIZE.width / AWARD_SIZE.height)
+  const k = cardW / AWARD_SIZE.width
+  const colGap = (left - cardW * 3) / 2
+  cards.slice(0, 6).forEach((card, i) => {
+    const x = M + (i % 3) * (cardW + colGap)
+    const y = bodyY + Math.floor(i / 3) * (cardH + gap)
+    ctx.save()
+    ctx.shadowColor = 'rgba(0,0,0,0.45)'
+    ctx.shadowBlur = 40
+    ctx.shadowOffsetY = 16
+    ctx.fillStyle = '#000'
+    ctx.beginPath()
+    ctx.roundRect(x, y, cardW, cardH, 36)
+    ctx.fill()
+    ctx.restore()
+    ctx.save()
+    ctx.beginPath()
+    ctx.roundRect(x, y, cardW, cardH, 36)
+    ctx.clip()
+    ctx.translate(x, y)
+    ctx.scale(k, k)
+    drawAward(ctx, card)
+    ctx.restore()
+  })
+
+  // More highlights as chips under the cards.
+  const rowsOfCards = Math.ceil(Math.min(6, cards.length) / 3)
+  const chipY = bodyY + rowsOfCards * (cardH + gap)
+  const chipH = bodyEnd - chipY
+  if (chips.length && chipH >= 110) {
+    const n = Math.min(3, chips.length)
+    const chipW = (left - gap * (n - 1)) / n
+    chips.slice(0, n).forEach((chip, i) => {
+      const x = M + i * (chipW + gap)
+      ctx.fillStyle = 'rgba(255,255,255,0.1)'
+      ctx.strokeStyle = 'rgba(255,255,255,0.18)'
+      ctx.lineWidth = 2
       ctx.beginPath()
-      ctx.roundRect(x, top, cardW, SEASON_PODIUM - 40, 28)
+      ctx.roundRect(x, chipY, chipW, chipH, 28)
       ctx.fill()
       ctx.stroke()
-      const cx = x + cardW / 2
-      ctx.fillStyle = fill
-      ctx.beginPath()
-      ctx.arc(cx, top + 64, 40, 0, Math.PI * 2)
-      ctx.fill()
       ctx.textBaseline = 'middle'
-      text(ordinal(p.place), cx, top + 66, 28, '#1e293b', 800, 'center')
-      text(titles[p.place] ?? '', cx, top + 132, 22, '#475569', 700, 'center')
-      ctx.font = `800 34px ${FONT}`
-      const lines = wrap(ctx, p.names.join(' & '), cardW - 36, 2)
-      lines.forEach((l, j) => text(l, cx, top + 178 + j * 40 - (lines.length - 1) * 20, 34, '#0f172a', 800, 'center'))
-      text(p.record, cx, top + 236, 40, '#0f172a', 800, 'center')
-      text(p.detail, cx, top + 274, 22, '#64748b', 500, 'center')
+      const mid = chipY + chipH / 2
+      text(chip.title.toUpperCase(), x + 32, mid - 26, 24, '#99f6e4', 800)
+      ctx.font = `800 38px ${FONT}`
+      const valueW = ctx.measureText(chip.value).width
+      text(chip.value, x + chipW - 32, mid + 18, 38, '#fde68a', 800, 'right')
+      ctx.font = `700 34px ${FONT}`
+      text(fit(ctx, chip.who, chipW - 96 - valueW), x + 32, mid + 18, 34, '#ffffff', 700)
     })
   }
 
+  // Standings: a white panel on the right, rows sized to fit everyone.
+  const px = SW - M - panelW
+  ctx.save()
+  ctx.shadowColor = 'rgba(0,0,0,0.4)'
+  ctx.shadowBlur = 40
+  ctx.shadowOffsetY = 16
+  ctx.fillStyle = '#ffffff'
+  ctx.beginPath()
+  ctx.roundRect(px, bodyY, panelW, bodyEnd - bodyY, 40)
+  ctx.fill()
+  ctx.restore()
   ctx.textBaseline = 'alphabetic'
-  text('Standings', PAD, tableY - 26, 32, '#0f172a', 800)
-  standingsTable(ctx, rows, tableY + 10)
-
+  text('Standings', px + 44, bodyY + 86, 52, '#0f172a', 900)
+  const col = { rank: px + 76, name: px + 140, p: px + panelW - 330, w: px + panelW - 245, l: px + panelW - 165, pct: px + panelW - 40 }
+  const headY = bodyY + 140
+  ctx.textBaseline = 'middle'
+  for (const [label, x, align] of [
+    ['#', col.rank, 'center'],
+    ['Player', col.name, 'left'],
+    ['P', col.p, 'center'],
+    ['W', col.w, 'center'],
+    ['L', col.l, 'center'],
+    ['Win %', col.pct, 'right'],
+  ] as const)
+    text(label, x, headY, 24, '#64748b', 700, align)
+  const top = headY + 26
+  const room = bodyEnd - 70 - top
+  const rowH = Math.max(30, Math.min(64, Math.floor(room / Math.max(1, rows.length))))
+  const shown = rows.slice(0, Math.floor(room / rowH))
+  const size = Math.round(rowH * 0.5)
+  shown.forEach((r, i) => {
+    const y = top + i * rowH
+    const mid = y + rowH / 2
+    if (i % 2 === 0) {
+      ctx.fillStyle = '#f1f5f9'
+      ctx.fillRect(px + 20, y, panelW - 40, rowH)
+    }
+    if (r.place !== shown[i - 1]?.place) {
+      const [fill] = MEDALS[r.place] ?? ['#e2e8f0']
+      ctx.fillStyle = fill
+      ctx.beginPath()
+      ctx.roundRect(col.rank - 34, mid - rowH * 0.32, 68, rowH * 0.64, rowH * 0.32)
+      ctx.fill()
+      text(ordinal(r.place), col.rank, mid + 1, Math.round(size * 0.8), '#1e293b', 800, 'center')
+    }
+    ctx.font = `700 ${size}px ${FONT}`
+    text(fit(ctx, r.name, col.p - col.name - 40), col.name, mid, size, '#0f172a', 700)
+    text(String(r.played), col.p, mid, size, '#64748b', 500, 'center')
+    text(String(r.wins), col.w, mid, size, '#047857', 800, 'center')
+    text(String(r.losses), col.l, mid, size, '#e11d48', 800, 'center')
+    text(r.rate === null ? '–' : `${Math.round(r.rate * 100)}%`, col.pct, mid, size, '#0f172a', 700, 'right')
+  })
   ctx.textBaseline = 'alphabetic'
-  text('P played · W won · L lost · ranked by wins, then win % · same record = same place', PAD, c.height - 45, 24, '#94a3b8', 500)
+  const more = rows.length - shown.length
+  text(
+    more > 0 ? `+${more} more · ranked by wins, then win %` : 'Ranked by wins, then win % · same record = same place',
+    px + 44,
+    bodyEnd - 30,
+    24,
+    '#94a3b8',
+    500,
+  )
   return png(c)
 }
 

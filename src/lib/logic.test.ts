@@ -1908,3 +1908,29 @@ describe('seasons', () => {
     expect(fromDocs(toDocs(base)).seasons).toEqual([])
   })
 })
+
+describe('awards', async () => {
+  const { awardList, HIGHLIGHTS, podiumAwards } = await import('./awards')
+  const g = (id: string, teamA: string[], teamB: string[], winner: 'A' | 'B') =>
+    ({ id, court: 1, teamA, teamB, startedAt: 0, endedAt: 600_000, winner, shuttles: 1 }) as Session['games'][number]
+  const session: Session = {
+    ...newSession(),
+    games: [g('1', ['a', 'b'], ['c', 'd'], 'A'), g('2', ['a', 'c'], ['b', 'd'], 'A'), g('3', ['a', 'd'], ['b', 'c'], 'A')],
+  }
+  const name = (id: string) => id.toUpperCase()
+
+  it('puts the top of the standings on the podium, sharing a place on the same record', () => {
+    const [first, second, third] = podiumAwards([session], { name })
+    expect(first).toMatchObject({ title: 'Champion', who: 'A', value: '3–0' })
+    // b, c and d are all 1–2: one card, the first two named.
+    expect(second).toMatchObject({ title: 'Runner-up', who: 'B, C +1', value: '1–2' })
+    expect(second.detail).toContain('3 tied')
+    expect(third.who).toBeUndefined()
+  })
+
+  it('has every highlight a season recap picks from', () => {
+    const keys = awardList([session], { name, names: (p) => p.map(name).join(' & '), showDate: true }).map((a) => a.key)
+    expect(HIGHLIGHTS.every((k) => keys.includes(k))).toBe(true)
+    expect(keys).toHaveLength(14)
+  })
+})

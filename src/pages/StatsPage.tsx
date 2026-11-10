@@ -1,29 +1,16 @@
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react'
 import { shuttlesUsed } from '../lib/cost'
 import {
-  arrivals,
-  bestRecord,
   checkinPlaces,
   checkinStandings,
-  BLOWOUT,
-  blowoutGames,
-  deuceGames,
   duoRecords,
-  finishedGames,
-  gameExtremes,
-  gameTime,
-  longDate,
-  mostOften,
-  places,
   playedGames,
   playerRecords,
-  rivalries,
-  standings,
   streaks,
   winRate,
-  worstRecord,
   type PlayerRecord,
 } from '../lib/stats'
+import { awardList, podiumAwards, type Award as AwardData } from '../lib/awards'
 import { GraphView } from '../components/GraphView'
 import { PlayerStats } from '../components/PlayerStats'
 import { SeasonBar } from '../components/SeasonBar'
@@ -182,172 +169,23 @@ function Dashboard({
   const duos = duoRecords(games)
   const runs = streaks(games)
   const records = [...playerRecords(games)].map(([id, r]) => ({ id, ...r }))
-  const rival = rivalries(games).find((r) => r.met >= 2)
-
-  const bestDuo = bestRecord(duos)
-  const worstDuo = worstRecord(duos)
-  const topBy = (f: (id: string) => number) => {
-    const ids = [...runs.keys()]
-    const top = Math.max(0, ...ids.map(f))
-    return { top, ids: ids.filter((id) => f(id) === top) }
-  }
-  const winRun = topBy((id) => runs.get(id)!.wins)
-  const lossRun = topBy((id) => runs.get(id)!.losses)
-  const hot = topBy((id) => runs.get(id)!.current)
-  const mostPlayed = Math.max(...records.map((r) => r.played))
-  const iron = records.filter((r) => r.played === mostPlayed).map((r) => r.id)
-  const bestPlayer = bestRecord(records, 3)
-  const finished = finishedGames(sessions)
-  const { longest, shortest } = gameExtremes(finished)
-  const deuce = deuceGames(finished)[0]
-  const blowout = blowoutGames(finished)[0]
-  // The winners and their score first: Tim & Ana, 29–27, beat Ben & Carla.
-  const sides = (g: NonNullable<typeof deuce>) => (g.winner === 'A' ? [g.teamA, g.teamB] : [g.teamB, g.teamA])
-  const shortDate = (iso: string) => new Date(iso + 'T00:00').toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })
-  const points = (g: NonNullable<typeof deuce>) => (g.winner === 'A' ? g.score! : [g.score![1], g.score![0]])
-  const which = (g: NonNullable<typeof longest>) => `Game ${g.number} · Court ${g.court}`
-  const teams = (g: NonNullable<typeof longest>) =>
-    `${names(g.teamA)} vs ${names(g.teamB)}${showDate ? ` · ${longDate(g.date)}` : ''}`
-  // Arrivals: one session shows times; several show who was first or last most often.
-  const arrived = arrivals(sessions)
-  const clock = (ms: number) => new Date(ms).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
-  const early = mostOften(arrived.map((a) => a.first))
-  const late = mostOften(arrived.map((a) => a.last))
-  const often = (times: number, what: string) => `${what} in ${times} of ${arrived.length} sessions`
   const scope = useContext(ScopeLabel)
   const sessionCount = sessions.filter((s) => s.games.length).length
-  const who = (ids: string[]) => (ids.length > 2 ? `${name(ids[0])}, ${name(ids[1])} +${ids.length - 2}` : ids.map(name).join(' & '))
-
-  // The top three places of the standings (with a win); players on the same record share a card.
-  const ranked = standings(games)
-  const place = places(ranked)
-  const podium = [1, 2, 3].map((n) => ranked.filter((x, i) => place[i] === n && x.wins > 0))
-  const PODIUM = [
-    { title: 'Champion', tone: 'amber', place: '1st place' },
-    { title: 'Runner-up', tone: 'slate', place: '2nd place' },
-    { title: 'Third place', tone: 'orange', place: '3rd place' },
-  ] as const
+  const podium = podiumAwards(sessions, { name })
+  const awards = awardList(sessions, { name, names, showDate })
 
   return (
     <>
       <div className="grid grid-cols-3 gap-5">
-        {PODIUM.map((p, i) => {
-          const top = podium[i]
-          const r = top[0]
-          return (
-            <Award
-              key={p.title}
-              title={p.title}
-              art="trophy"
-              tone={p.tone}
-              who={top.length ? who(top.map((x) => x.id)) : undefined}
-              value={r && record(r)}
-              empty={`No ${p.place.replace(' place', '')} yet`}
-            >
-              {r && `${p.place}${top.length > 1 ? ` · ${top.length} tied` : ''} · ${pct(r)} · ${r.played} ${r.played === 1 ? 'game' : 'games'}`}
-            </Award>
-          )
-        })}
+        {podium.map((a) => (
+          <AwardCard key={a.key} award={a} />
+        ))}
       </div>
 
       <div className="grid grid-cols-3 gap-5 xl:grid-cols-4">
-        <Award title="Unbeatable duo" art="trophy" tone="emerald" who={bestDuo && names(bestDuo.pair)} value={bestDuo && record(bestDuo)}>
-          {bestDuo && `${pct(bestDuo)} · ${bestDuo.played} ${bestDuo.played === 1 ? 'game' : 'games'} together`}
-        </Award>
-        <Award title="Worst duo" art="net" tone="rose" who={worstDuo && names(worstDuo.pair)} value={worstDuo && record(worstDuo)}>
-          {worstDuo && `${pct(worstDuo)} · ${worstDuo.played} ${worstDuo.played === 1 ? 'game' : 'games'} together`}
-        </Award>
-        <Award
-          title="Longest win streak" art="flame"
-          tone="amber"
-          who={winRun.top ? who(winRun.ids) : undefined}
-          value={winRun.top ? `${winRun.top} ${winRun.top === 1 ? 'win' : 'wins'}` : undefined}
-        >
-          in a row
-        </Award>
-        <Award
-          title="Longest losing run" art="rain"
-          tone="slate"
-          who={lossRun.top ? who(lossRun.ids) : undefined}
-          value={lossRun.top ? `${lossRun.top} ${lossRun.top === 1 ? 'loss' : 'losses'}` : undefined}
-        >
-          in a row
-        </Award>
-        <Award
-          title="On a roll" art="rocket"
-          tone="orange"
-          who={hot.top >= 2 ? who(hot.ids) : undefined}
-          value={hot.top >= 2 ? `${hot.top} wins` : undefined}
-          empty="Nobody has won 2 in a row lately"
-        >
-          and counting
-        </Award>
-        <Award title="Best win rate" art="target" tone="violet" who={bestPlayer && name(bestPlayer.id)} value={bestPlayer && pct(bestPlayer)}>
-          {bestPlayer && `${record(bestPlayer)} in ${bestPlayer.wins + bestPlayer.losses} decided games`}
-        </Award>
-        <Award title="Most games" art="tube" tone="sky" who={who(iron)} value={`${mostPlayed} games`}>
-          {iron.length > 1 ? `${iron.length} players tied` : 'played'}
-        </Award>
-        <Award
-          title="Biggest rivalry" art="clash"
-          tone="teal"
-          who={rival && `${name(rival.pair[0])} vs ${name(rival.pair[1])}`}
-          value={rival && `${rival.wins[0]}–${rival.wins[1]}`}
-          empty="No two players have faced each other twice"
-        >
-          {rival && `Met ${rival.met} times`}
-        </Award>
-        <Award title="Longest game" art="hourglass" tone="indigo" who={longest && which(longest)} value={longest && gameTime(longest)}>
-          {longest && teams(longest)}
-        </Award>
-        <Award
-          title="Shortest game" art="stopwatch"
-          tone="lime"
-          who={shortest && which(shortest)}
-          value={shortest && gameTime(shortest)}
-          empty="No game lasted over a minute"
-        >
-          {shortest && teams(shortest)}
-        </Award>
-        <Award
-          title="Highest deuce" art="deuce"
-          tone="blue"
-          who={deuce && names(sides(deuce)[0])}
-          value={deuce && points(deuce).join('–')}
-          empty="No scored game has gone to deuce (20 all) yet"
-        >
-          {deuce && `beat ${names(sides(deuce)[1])} · ${showDate ? shortDate(deuce.date) : which(deuce)}`}
-        </Award>
-        <Award
-          title="Biggest blowout" art="blowout"
-          tone="red"
-          who={blowout && names(sides(blowout)[0])}
-          value={blowout && points(blowout).join('–')}
-          empty={`No scored game has been won by ${BLOWOUT} or more yet`}
-        >
-          {blowout &&
-            `beat ${names(sides(blowout)[1])} by ${Math.abs(blowout.score![0] - blowout.score![1])} · ${showDate ? shortDate(blowout.date) : which(blowout)}`}
-        </Award>
-        <Award
-          title="Early bird" art="sunrise"
-          tone="cyan"
-          who={arrived.length ? who(early.ids) : undefined}
-          value={arrived.length === 1 ? clock(arrived[0].firstAt) : arrived.length ? `${early.times}×` : undefined}
-          empty="Needs at least two players checked in"
-        >
-          {arrived.length === 1 ? 'first to check in' : often(early.times, 'first to arrive')}
-        </Award>
-        <Award
-          title="Last to arrive" art="moon"
-          tone="fuchsia"
-          who={arrived.length ? who(late.ids) : undefined}
-          value={arrived.length === 1 ? clock(arrived[0].lastAt) : arrived.length ? `${late.times}×` : undefined}
-          empty="Needs at least two players checked in"
-        >
-          {arrived.length === 1
-            ? `${Math.round((arrived[0].lastAt - arrived[0].firstAt) / 60_000)} min after the first`
-            : often(late.times, 'last to arrive')}
-        </Award>
+        {awards.map((a) => (
+          <AwardCard key={a.key} award={a} />
+        ))}
       </div>
 
       <div className="grid grid-cols-2 items-start gap-5">
@@ -382,6 +220,14 @@ function Dashboard({
         </div>
       </div>
     </>
+  )
+}
+
+function AwardCard({ award: a }: { award: AwardData }) {
+  return (
+    <Award title={a.title} art={a.art} tone={a.tone} who={a.who} value={a.value} empty={a.empty}>
+      {a.detail}
+    </Award>
   )
 }
 

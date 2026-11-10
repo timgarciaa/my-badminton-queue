@@ -1,9 +1,10 @@
 import { useState } from 'react'
 import { rangeLabel, seasonScope, type DateRange, type Scope } from '../lib/scope'
 import { seasonImage, shareImage } from '../lib/shareImage'
-import { places, playedGames, standings, winRate } from '../lib/stats'
+import { awardList, HIGHLIGHTS, podiumAwards, type Award } from '../lib/awards'
+import { places, playedGames, standings } from '../lib/stats'
 import { usePlayerMap, useStore } from '../store/useStore'
-import type { Season, Session } from '../types'
+import type { Pair, Season, Session } from '../types'
 import { ShareIcon } from './Standings'
 
 function TrashIcon({ className = 'h-5 w-5' }: { className?: string }) {
@@ -14,30 +15,27 @@ function TrashIcon({ className = 'h-5 w-5' }: { className?: string }) {
   )
 }
 
-/** Shares the season as one image: name, dates, totals, the top three and the standings. */
+/** Shares the season as one landscape image: name, dates, totals, award cards and the standings. */
 function useShareSeason(season: Season | undefined, sessions: Session[]) {
   const players = usePlayerMap()
   return () => {
     if (!season) return
+    const name = (id: string) => players.get(id)?.name ?? 'Removed player'
+    const names = (p: Pair) => p.map(name).sort((a, b) => a.localeCompare(b)).join(' & ')
     const games = playedGames(sessions)
     const ranked = standings(games)
       .filter((r) => players.has(r.id))
       .map((r) => ({ ...r, name: players.get(r.id)!.name }))
     const place = places(ranked)
-    const rows = ranked.map((r, i) => ({ ...r, place: place[i] }))
     const minutes = games.length
       ? Math.round(games.reduce((n, g) => n + (g.endedAt! - g.startedAt), 0) / games.length / 60_000)
       : 0
-    const pct = (r: (typeof rows)[number]) => {
-      const rate = winRate(r)
-      return rate === null ? '–' : `${Math.round(rate * 100)}%`
-    }
-    const podium = [1, 2, 3].flatMap((n) => {
-      const top = rows.filter((r) => r.place === n && r.wins > 0)
-      if (!top.length) return []
-      const r = top[0]
-      return [{ place: n, names: top.map((x) => x.name), record: `${r.wins}–${r.losses}`, detail: `${pct(r)} · ${r.played} games` }]
-    })
+    // The top three, then the best highlights won this season.
+    const won = (a: Award) => !!(a.who && a.value)
+    const list = awardList(sessions, { name, names, showDate: true })
+    const highlights = HIGHLIGHTS.map((key) => list.find((a) => a.key === key)!).filter(won)
+    const awards = [...podiumAwards(sessions, { name }).filter(won), ...highlights]
+    const card = (a: Award) => ({ ...a, detail: a.detail ?? '', scope: season.name })
     const image = seasonImage({
       name: season.name,
       dates: rangeLabel(season),
@@ -47,8 +45,9 @@ function useShareSeason(season: Season | undefined, sessions: Session[]) {
         ['Players', String(new Set(sessions.flatMap((x) => x.attendees.map((a) => a.playerId))).size)],
         ['Avg game', `${minutes} min`],
       ],
-      podium,
-      rows,
+      cards: awards.slice(0, 6).map(card),
+      chips: awards.slice(6, 9).map((a) => ({ title: a.title, who: a.who!, value: a.value! })),
+      rows: ranked.map((r, i) => ({ ...r, place: place[i] })),
     })
     const slug = season.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'season'
     void shareImage(image, `${slug}.png`, season.name)
