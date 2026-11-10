@@ -1375,6 +1375,42 @@ describe('club cloud documents', async () => {
   })
 })
 
+describe('signing in on another device', async () => {
+  const { choose, hashOf, toDocs, useCloud } = await import('./cloud')
+  const club = { id: 'c1', name: 'Club' }
+  const players = [{ id: 'a', name: 'Ana', skill: 3 as const, active: true, createdAt: 0 }]
+  const local = { players, session: newSession(), history: [], schedule: [], seasons: [] }
+  const hashes = (d: Record<string, string>) => Object.fromEntries(Object.entries(d).map(([k, v]) => [k, hashOf(v)]))
+  const snap = (players: unknown[], rev: number) => ({ club, user: 'u', rev, docs: { players: JSON.stringify(players), session: JSON.stringify(local.session) } })
+
+  it('takes the club data when this device has not changed since it last synced', () => {
+    useStore.setState(local)
+    useCloud.setState({ lastClubId: 'c1' })
+    const saved = hashes(toDocs(local))
+    // Another device added a player since (rev 5 to 7).
+    const newer = snap([...players, { ...players[0], id: 'b', name: 'Ben' }], 7)
+    expect(choose(newer, { clubId: 'c1', rev: 5, saved })).toBe('download')
+  })
+
+  it('still asks when both this device and the club changed', () => {
+    useStore.setState({ ...local, players: [...players, { ...players[0], id: 'z', name: 'Zed' }] })
+    const saved = hashes(toDocs(local))
+    expect(choose(snap([...players, { ...players[0], id: 'b', name: 'Ben' }], 7), { clubId: 'c1', rev: 5, saved })).toBe('ask')
+    // Only this device changed: send its changes up.
+    expect(choose(snap(players, 5), { clubId: 'c1', rev: 5, saved })).toBe('upload')
+  })
+
+  it('asks for data that went to another club, and downloads onto an empty device', () => {
+    useStore.setState(local)
+    useCloud.setState({ lastClubId: 'other' })
+    expect(choose(snap(players, 3), { clubId: 'other', rev: 3, saved: hashes(toDocs(local)) })).toBe('upload')
+    expect(choose({ ...snap(players, 3), docs: { players: '[]' } }, { clubId: 'other', rev: 1 })).toBe('ask')
+    useStore.setState({ ...local, players: [] })
+    expect(choose(snap(players, 3), { rev: 0 })).toBe('download')
+    useCloud.setState({ lastClubId: undefined })
+  })
+})
+
 describe('session dates', () => {
   afterEach(() => {
     vi.useRealTimers()

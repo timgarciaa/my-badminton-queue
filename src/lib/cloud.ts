@@ -18,6 +18,8 @@ export const CLOUD = !!(CHECKIN_API && AUTH_URL && CLIENT_ID)
 
 const SAVE_DELAY = 3000
 const RETRY_MS = 20_000
+/** How often an open app checks the club for changes made on other devices. */
+const PULL_MS = 2 * 60_000
 /** Per request; the server allows 90 documents at once. */
 const MAX_DOCS = 80
 const MAX_BYTES = 3_000_000
@@ -39,9 +41,9 @@ export interface Club {
 interface CloudState {
   auth?: Auth
   club?: Club
-  /** The club's revision this device last saw. */
+  /** The club's revision this device last saw (kept after signing out, with saved, for lastClubId). */
   rev: number
-  /** Hash of each document as last saved, so only changes are sent. */
+  /** Hash of each document as last saved or downloaded, so only changes are sent. */
   saved: Record<string, string>
   /** The club this device's data last went to; kept after signing out. */
   lastClubId?: string
@@ -257,6 +259,34 @@ export async function save() {
   }
 }
 
+let pulling = false
+
+/**
+ * Bring this device up to date with the club: when another device saved
+ * since, take the club's data. If this device also has changes not saved yet,
+ * the organizer picks which to keep (see CloudBanner).
+ */
+export async function pull() {
+  const { auth, club } = useCloud.getState()
+  if (!CLOUD || !auth || !club || running || pulling || useSyncStatus.getState().status === 'conflict') return
+  pulling = true
+  try {
+    const snap = await fetchClub()
+    // A save started meanwhile, or nothing changed: check again later.
+    if (running || snap.club.id !== club.id || snap.rev === useCloud.getState().rev) return
+    if (changes(toDocs(useStore.getState()), useCloud.getState().saved).length > 0) {
+      clearTimeout(timer)
+      useSyncStatus.setState({ status: 'conflict' })
+    } else takeClubData(snap)
+  } catch (e) {
+    const status = (e as Failure).status
+    if (status === 401 || status === 403) signInAgain()
+    // Offline: checked again when back online or the app is opened.
+  } finally {
+    pulling = false
+  }
+}
+
 export interface Member {
   username: string
   approved: boolean
@@ -295,24 +325,35 @@ export function useCloudSync() {
   const signedIn = useCloud((s) => !!s.auth && !!s.club)
   useEffect(() => {
     if (!CLOUD || !signedIn) return
-    scheduleSave(500)
+    // The club's latest first, then anything this device changed while closed.
+    void pull().then(() => scheduleSave(500))
     void refreshWaiting()
-    const requests = window.setInterval(() => document.visibilityState === 'visible' && void refreshWaiting(), 5 * 60_000)
+    const visible = () => document.visibilityState === 'visible'
+    const requests = window.setInterval(() => visible() && void refreshWaiting(), 5 * 60_000)
+    const pulls = window.setInterval(() => visible() && void pull(), PULL_MS)
     const unsubscribe = useStore.subscribe((st, prev) => {
       if (st.players !== prev.players || st.session !== prev.session || st.history !== prev.history || st.schedule !== prev.schedule || st.seasons !== prev.seasons) {
         scheduleSave()
       }
     })
-    const hidden = () => document.visibilityState === 'hidden' && void save()
-    const online = () => scheduleSave(0)
-    document.addEventListener('visibilitychange', hidden)
+    // Put away: save now. Back again: pick up changes from other devices.
+    const shown = () => void (visible() ? pull() : save())
+    const online = () => {
+      scheduleSave(0)
+      void pull()
+    }
+    const focus = () => void pull()
+    document.addEventListener('visibilitychange', shown)
     window.addEventListener('online', online)
+    window.addEventListener('focus', focus)
     return () => {
       unsubscribe()
       clearTimeout(timer)
       clearInterval(requests)
-      document.removeEventListener('visibilitychange', hidden)
+      clearInterval(pulls)
+      document.removeEventListener('visibilitychange', shown)
       window.removeEventListener('online', online)
+      window.removeEventListener('focus', focus)
     }
   }, [signedIn])
 }
@@ -335,13 +376,16 @@ export const fetchClub = () => api<ClubSnapshot>('GET', '/club')
  */
 export type Choice = 'upload' | 'download' | 'ask'
 
-function choose(snap: ClubSnapshot, before: { clubId?: string; rev: number }): Choice {
+export function choose(snap: ClubSnapshot, before: { clubId?: string; rev: number; saved?: Record<string, string> }): Choice {
   const local = useStore.getState()
   // This device's data belongs to another club: never pass it on without asking.
   const otherClub = !!useCloud.getState().lastClubId && useCloud.getState().lastClubId !== snap.club.id
   if (Object.keys(snap.docs).length === 0) return hasData(local) && otherClub ? 'ask' : 'upload'
   if (!hasData(local)) return 'download'
-  if (before.clubId === snap.club.id && before.rev === snap.rev) return 'upload'
+  const same = before.clubId === snap.club.id
+  if (same && before.rev === snap.rev) return 'upload'
+  // Nothing changed here since this device last synced: the club's copy is the latest.
+  if (same && before.saved && changes(toDocs(local), before.saved).length === 0) return 'download'
   return changes(toDocs(local), hashes(snap.docs)).length === 0 ? 'upload' : 'ask'
 }
 
@@ -354,7 +398,7 @@ export interface Pending {
 export type SignInResult = { snap: ClubSnapshot; choice: Choice } | { pending: Pending }
 
 /** Fetches the club after signing in: its data, with whose to use, or that the account is waiting. */
-async function enter(before: { clubId?: string; rev: number }): Promise<SignInResult> {
+async function enter(before: { clubId?: string; rev: number; saved?: Record<string, string> }): Promise<SignInResult> {
   try {
     const snap = await fetchClub()
     return { snap, choice: choose(snap, before) }
@@ -384,7 +428,8 @@ export async function signUp(username: string, password: string, club: { create:
 
 /** Signs in and fetches the club (see SignInResult). */
 export async function signIn(username: string, password: string): Promise<SignInResult> {
-  const before = { clubId: useCloud.getState().club?.id, rev: useCloud.getState().rev }
+  const { club, lastClubId, rev, saved } = useCloud.getState()
+  const before = { clubId: club?.id ?? lastClubId, rev, saved }
   const r = await cognito<AuthResult>('InitiateAuth', {
     AuthFlow: 'USER_PASSWORD_AUTH',
     ClientId: CLIENT_ID,
@@ -437,8 +482,9 @@ export function signInAgain() {
   useSyncStatus.setState({ status: 'saved' })
 }
 
+/** Keeps rev and saved with lastClubId, to tell on the next sign-in whether this device's data is just an older copy. */
 export function signOut() {
   clearTimeout(timer)
-  useCloud.setState({ auth: undefined, club: undefined, rev: 0, saved: {} })
+  useCloud.setState({ auth: undefined, club: undefined })
   useSyncStatus.setState({ status: 'saved', savedAt: undefined, waiting: 0 })
 }
