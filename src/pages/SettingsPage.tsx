@@ -1,9 +1,9 @@
 import { useRef, useState } from 'react'
 import { exportBackup, LAST_BACKUP_KEY } from '../lib/backup'
-import { costSummary, dueFor, money, pricingOf } from '../lib/cost'
+import { costSummary, courtBooking, dueFor, money, pricingOf } from '../lib/cost'
 import { longDate } from '../lib/stats'
 import { ClubAccountCard } from '../components/Cloud'
-import { EmptyState, MoneyField } from '../components/ui'
+import { EmptyState, MoneyField, Stepper } from '../components/ui'
 import { useCloud } from '../lib/cloud'
 import { usePlayerMap, useStore } from '../store/useStore'
 import type { PricingStyle, Session } from '../types'
@@ -204,6 +204,46 @@ export function SettingsPage() {
   )
 }
 
+/** A past session's court fee, with its booking, which can be corrected (e.g. 3 courts, not 2). */
+function HistoryCourt({ session }: { session: Session }) {
+  const setBooking = useStore((s) => s.setHistoryCourtBooking)
+  const [editing, setEditing] = useState(false)
+  const b = courtBooking(session)
+  const set = (patch: Parameters<typeof setBooking>[1]) => setBooking(session.id, patch)
+  const booked = session.courtBooking && `${b.courts} ${b.courts === 1 ? 'court' : 'courts'} × ${b.hours} h × ${money(b.rate)}`
+
+  if (!editing) {
+    return (
+      <p>
+        Court {money(session.courtFee)}
+        {booked && <span className="ml-1.5 text-xs text-slate-500">({booked})</span>}
+        <button className="ml-2 text-sm font-semibold text-teal-700 underline-offset-2 hover:underline" onClick={() => setEditing(true)}>
+          Edit
+        </button>
+      </p>
+    )
+  }
+  return (
+    <div className="my-1 w-64 space-y-2 rounded-xl bg-white p-3 ring-1 ring-slate-200">
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-sm font-medium text-slate-500">Courts</span>
+        <Stepper value={b.courts} min={1} max={12} onChange={(n) => set({ courts: n })} />
+      </div>
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-sm font-medium text-slate-500">Hours</span>
+        <Stepper value={b.hours} min={0.5} max={12} step={0.5} onChange={(n) => set({ hours: n })} />
+      </div>
+      <MoneyField label="Per court, per hour" value={b.rate} onChange={(n) => set({ rate: n })} />
+      <div className="flex items-center gap-2 border-t border-slate-200 pt-2">
+        <span className="font-bold tabular-nums">Court {money(session.courtFee)}</span>
+        <button className="d-btn d-btn-sm d-btn-primary ml-auto" onClick={() => setEditing(false)}>
+          Done
+        </button>
+      </div>
+    </div>
+  )
+}
+
 /** Past sessions, newest first; tap one to see its cost breakdown and who didn't pay. */
 function History({ sessions }: { sessions: Session[] }) {
   const players = usePlayerMap()
@@ -296,7 +336,7 @@ function History({ sessions }: { sessions: Session[] }) {
                           <div className="flex flex-wrap gap-x-8 gap-y-2 py-2 pl-5 text-sm">
                             <div>
                               <p className="text-xs font-semibold text-slate-500 uppercase">Costs</p>
-                              <p>Court {money(s.courtFee)}</p>
+                              <HistoryCourt session={s} />
                               {c.shuttles.map((l) => (
                                 <p key={l.id}>
                                   {c.shuttles.length > 1 ? l.name : 'Shuttles'}: {l.used} × {money(l.price)} = {money(l.cost)}

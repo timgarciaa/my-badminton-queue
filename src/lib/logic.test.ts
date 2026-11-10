@@ -453,6 +453,37 @@ describe('payment styles', () => {
     expect(useStore.getState().session.attendees.find((a) => a.playerId === 'e')!.paidAmount).toBeUndefined()
   })
 
+  it('keeps the court booking in step with the courts used', () => {
+    const booked = { ...base(), games: [], courtCount: 2, courts: [null, null], courtBooking: { courts: 2, hours: 2, rate: 300 }, courtFee: 1200 }
+    useStore.setState({ session: booked })
+    const st = useStore.getState()
+    const fee = () => useStore.getState().session.courtFee
+    // Before play: either way (this week only 2 booked, or 3).
+    st.setCourtCount(3)
+    expect(fee()).toBe(1800)
+    st.setCourtCount(2)
+    expect(fee()).toBe(1200)
+    // Once games start, opening a third court adds it; letting one go early does not take it off.
+    st.setCourtCount(3)
+    useStore.setState((x) => ({ session: { ...x.session, games: [game('g1', ['a', 'b'], ['c', 'd'], 1)] } }))
+    st.setCourtCount(2)
+    expect(fee()).toBe(1800)
+    // A session with only a fee keeps it.
+    useStore.setState({ session: { ...booked, courtBooking: undefined, courtFee: 1000 } })
+    st.setCourtCount(3)
+    expect(fee()).toBe(1000)
+  })
+
+  it('corrects a past session court booking, and its share', () => {
+    const past = { ...base(), id: 'nov8', courtCount: 3, courtBooking: { courts: 2, hours: 2, rate: 300 }, courtFee: 1200 }
+    useStore.setState({ history: [past] })
+    expect(costSummary(useStore.getState().history[0]).perHead).toBe(272) // (1200 + 160 shuttles) / 5
+    useStore.getState().setHistoryCourtBooking('nov8', { courts: 3 })
+    const fixed = useStore.getState().history[0]
+    expect(fixed).toMatchObject({ courtFee: 1800, courtBooking: { courts: 3, hours: 2, rate: 300 } })
+    expect(costSummary(fixed).perHead).toBe(392) // (1800 + 160) / 5
+  })
+
   it('marks a player paid in a past session, e.g. a day later, and back', () => {
     const past = { ...base(), id: 'past', status: 'closed' as const }
     const other = { ...base(), id: 'other' }

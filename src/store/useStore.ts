@@ -263,6 +263,8 @@ interface State {
   togglePaid: (playerId: string) => void
   /** The same for a past session, e.g. someone who paid a day or two later. */
   togglePaidInHistory: (sessionId: string, playerId: string) => void
+  /** Correct a past session's court booking, and so its court fee. */
+  setHistoryCourtBooking: (sessionId: string, patch: Partial<CourtBooking>) => void
   /** Change how players pay, or its amounts. */
   setPricing: (patch: Partial<Pricing>) => void
   moveInQueue: (playerId: string, delta: number) => void
@@ -276,6 +278,7 @@ interface State {
   swapInQueue: (outId: string, inId: string) => void
 
   setSessionField: (field: 'courtFee' | 'shuttlePrice' | 'extraShuttles', value: number) => void
+  /** Court cards; the court booking (and fee) follows, see setCourtCount. */
   setCourtCount: (n: number) => void
   /** Change the court booking; the court fee is worked out from it. */
   setCourtBooking: (patch: Partial<CourtBooking>) => void
@@ -495,6 +498,15 @@ export const useStore = create<State>()(
         togglePaidInHistory: (sessionId, playerId) =>
           set((st) => ({ history: st.history.map((s) => (s.id === sessionId ? togglePaidIn(s, playerId) : s)) })),
 
+        setHistoryCourtBooking: (sessionId, patch) =>
+          set((st) => ({
+            history: st.history.map((s) => {
+              if (s.id !== sessionId) return s
+              const booking = { ...courtBooking(s), ...patch }
+              return { ...s, courtBooking: booking, courtFee: courtFeeOf(booking) }
+            }),
+          })),
+
         setPricing: (patch) =>
           updateSession((s) => {
             const before = pricingOf(s)
@@ -533,7 +545,12 @@ export const useStore = create<State>()(
             const lastBusy = s.courts.reduce((max, g, i) => (g ? i + 1 : max), 0)
             const count = Math.max(1, lastBusy, Math.min(6, n))
             const courts = Array.from({ length: count }, (_, i) => s.courts[i] ?? null)
-            return { ...s, courtCount: count, courts }
+            // The court fee follows the courts: either way until play starts, then only
+            // up (a court let go early is still paid for). Sessions with only a fee keep it.
+            const booking = s.courtBooking
+            const follow = booking && (sessionStarted(s) ? count > booking.courts : count !== booking.courts)
+            const next = follow ? { ...booking, courts: count } : undefined
+            return { ...s, courtCount: count, courts, ...(next && { courtBooking: next, courtFee: courtFeeOf(next) }) }
           }),
 
         setCourtBooking: (patch) =>
