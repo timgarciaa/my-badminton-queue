@@ -172,6 +172,15 @@ describe('club documents', () => {
   })
 })
 
+describe('club seasons', () => {
+  it('takes the stats seasons', async () => {
+    const { call, token } = setup()
+    const put = { seasons: '[{"id":"s","name":"Season 1","from":"2026-09-01","to":"2026-11-30"}]' }
+    expect((await call('POST', '/club/save', token, { baseRev: 0, put, remove: [] })).body).toEqual({ rev: 1 })
+    expect((await call('GET', '/club', token)).body.docs.seasons).toBe(put.seasons)
+  })
+})
+
 describe('public stats page', () => {
   const saved = (call, token) => {
     const players = [{ id: 'p1', name: 'Tim', skill: 4, gender: 'M', active: true, createdAt: 1 }, { id: 'p2', name: 'Ana', skill: 2, gender: 'F', active: true, createdAt: 2 }]

@@ -146,6 +146,16 @@ export interface RemoteCheckin {
   handled: string[]
 }
 
+/** A named date range for stats, e.g. Season 1 from September to November. */
+export interface Season {
+  id: string
+  name: string
+  /** First day, YYYY-MM-DD. */
+  from: string
+  /** Last day, YYYY-MM-DD, included. */
+  to: string
+}
+
 /** A game booked for later; the session starts by itself at `start` and counts down to `end`. */
 export interface ScheduledGame {
   id: string

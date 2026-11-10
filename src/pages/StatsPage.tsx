@@ -14,9 +14,11 @@ import {
   gameTime,
   longDate,
   mostOften,
+  places,
   playedGames,
   playerRecords,
   rivalries,
+  standings,
   streaks,
   winRate,
   worstRecord,
@@ -24,8 +26,9 @@ import {
 } from '../lib/stats'
 import { GraphView } from '../components/GraphView'
 import { PlayerStats } from '../components/PlayerStats'
+import { SeasonBar } from '../components/SeasonBar'
 import { SessionSelect } from '../components/SessionSelect'
-import { PlaceCell, ShareIcon, Standings } from '../components/Standings'
+import { PlaceCell, ShareIcon, Standings, WinsStandings } from '../components/Standings'
 import { EmptyState } from '../components/ui'
 import { AWARD_SIZE, awardImage, checkinImage, drawAward, shareImage, type AwardArt, type AwardTone } from '../lib/shareImage'
 import { useScope } from '../lib/scope'
@@ -47,8 +50,9 @@ const record = (r: PlayerRecord) => `${r.wins}–${r.losses}`
 export function StatsPage() {
   const session = useStore((s) => s.session)
   const history = useStore((s) => s.history)
+  const seasons = useStore((s) => s.seasons)
   const players = usePlayerMap()
-  const { scope, setScope, all, recent, sessions, span, label } = useScope(session, history)
+  const { scope, setScope, range, setRange, season, all, recent, sessions, span, label } = useScope(session, history, seasons)
   const [view, setView] = useState<'overview' | 'players' | 'graph'>('overview')
   const [chosen, setChosen] = useState<string | null>(null)
   const games = playedGames(sessions)
@@ -80,8 +84,10 @@ export function StatsPage() {
           history={history}
           all={all}
           recent={recent}
+          seasons={seasons}
         />
       </div>
+      <SeasonBar scope={scope} range={range} onRange={setRange} season={season} onScope={setScope} />
 
       {games.length === 0 ? (
         <div className="space-y-5 px-5 pb-5">
@@ -89,6 +95,8 @@ export function StatsPage() {
           <EmptyState>
             {scope === '3m'
               ? 'No finished games in the last 3 months.'
+              : scope === 'range' || season
+                ? `No finished games from ${label}.`
               : scope === session.id || history.length === 0
                 ? 'Stats show up once games are finished. End a session on the Costs tab to keep it in history.'
                 : 'No finished games in this session.'}
@@ -210,8 +218,38 @@ function Dashboard({
   const sessionCount = sessions.filter((s) => s.games.length).length
   const who = (ids: string[]) => (ids.length > 2 ? `${name(ids[0])}, ${name(ids[1])} +${ids.length - 2}` : ids.map(name).join(' & '))
 
+  // The top three places of the standings (with a win); players on the same record share a card.
+  const ranked = standings(games)
+  const place = places(ranked)
+  const podium = [1, 2, 3].map((n) => ranked.filter((x, i) => place[i] === n && x.wins > 0))
+  const PODIUM = [
+    { title: 'Champion', tone: 'amber', place: '1st place' },
+    { title: 'Runner-up', tone: 'slate', place: '2nd place' },
+    { title: 'Third place', tone: 'orange', place: '3rd place' },
+  ] as const
+
   return (
     <>
+      <div className="grid grid-cols-3 gap-5">
+        {PODIUM.map((p, i) => {
+          const top = podium[i]
+          const r = top[0]
+          return (
+            <Award
+              key={p.title}
+              title={p.title}
+              art="trophy"
+              tone={p.tone}
+              who={top.length ? who(top.map((x) => x.id)) : undefined}
+              value={r && record(r)}
+              empty={`No ${p.place.replace(' place', '')} yet`}
+            >
+              {r && `${p.place}${top.length > 1 ? ` · ${top.length} tied` : ''} · ${pct(r)} · ${r.played} ${r.played === 1 ? 'game' : 'games'}`}
+            </Award>
+          )
+        })}
+      </div>
+
       <div className="grid grid-cols-3 gap-5 xl:grid-cols-4">
         <Award title="Unbeatable duo" art="trophy" tone="emerald" who={bestDuo && names(bestDuo.pair)} value={bestDuo && record(bestDuo)}>
           {bestDuo && `${pct(bestDuo)} · ${bestDuo.played} ${bestDuo.played === 1 ? 'game' : 'games'} together`}
@@ -325,6 +363,16 @@ function Dashboard({
             filename={`standings-${scope.toLowerCase().replace(/[^a-z0-9]+/g, '-')}.png`}
             onFocus={(id) => id && onChoose(id)}
             hint="Tap a player to see their stats"
+          />
+          <WinsStandings
+            games={games}
+            title={scope === 'All time' ? 'All-time wins' : scope === 'Last 3 months' ? 'Wins · last 3 months' : 'Wins'}
+            subtitle={
+              showDate
+                ? `${sessionCount} ${sessionCount === 1 ? 'session' : 'sessions'} · ${games.length} games`
+                : `${scope} · ${games.length} ${games.length === 1 ? 'game' : 'games'}`
+            }
+            filename={`wins-${scope.toLowerCase().replace(/[^a-z0-9]+/g, '-')}.png`}
           />
           <CheckinStandings sessions={sessions} name={name} />
         </div>

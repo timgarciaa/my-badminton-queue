@@ -6,7 +6,7 @@ import { heldIds, isSetReady, setIds } from '../lib/plan'
 import { applySwap, dequeue, enqueue, move, placeByArrival, pushFront, swap } from '../lib/queue'
 import { scoreLeader } from '../lib/stats'
 import { clash } from '../lib/schedule'
-import type { Attendee, CourtBooking, Game, GameSwap, Gender, Pair, Player, Pricing, ScheduledGame, Session, SetGame, ShuttleType, Skill } from '../types'
+import type { Attendee, CourtBooking, Game, GameSwap, Gender, Pair, Player, Pricing, ScheduledGame, Season, Session, SetGame, ShuttleType, Skill } from '../types'
 
 /** A check-in made on a player's phone; ids starting with new- are names not on the list. */
 export interface PhoneCheckin {
@@ -210,6 +210,8 @@ interface State {
   history: Session[]
   /** Games booked for later; each starts the session by itself at its time. */
   schedule: ScheduledGame[]
+  /** Named date ranges for stats. */
+  seasons: Season[]
 
   addPlayer: (name: string, skill: Skill, gender: Gender) => void
   /** Bulk add (import); gender left unset and skill Intermediate until edited. */
@@ -272,6 +274,10 @@ interface State {
   /** Move a booked game; false if it would share time with another. */
   rescheduleGame: (id: string, start: number, end: number) => boolean
   unscheduleGame: (id: string) => void
+  /** Save a date range as a season; returns its id. */
+  addSeason: (season: Omit<Season, 'id'>) => string
+  updateSeason: (id: string, patch: Partial<Omit<Season, 'id'>>) => void
+  deleteSeason: (id: string) => void
   /**
    * Start the session from a booked game: the clock runs from the game's start
    * (even if the app opens late) to its end, and the court booking takes its
@@ -334,7 +340,13 @@ interface State {
   resetSession: () => void
   /** Delete everything on this device: players, the current session and history. */
   clearAll: () => void
-  importData: (data: { players: Player[]; session?: Session; history?: Session[]; schedule?: ScheduledGame[] }) => void
+  importData: (data: {
+    players: Player[]
+    session?: Session
+    history?: Session[]
+    schedule?: ScheduledGame[]
+    seasons?: Season[]
+  }) => void
 }
 
 /** Brings data saved by an older version of the app up to date. */
@@ -360,6 +372,7 @@ export const useStore = create<State>()(
         session: newSession(),
         history: [],
         schedule: [],
+        seasons: [],
 
         addPlayer: (name, skill, gender) =>
           set((st) => ({
@@ -584,6 +597,15 @@ export const useStore = create<State>()(
 
         unscheduleGame: (id) => set((st) => ({ schedule: st.schedule.filter((g) => g.id !== id) })),
 
+        addSeason: (season) => {
+          const id = uid()
+          set((st) => ({ seasons: [...st.seasons, { ...season, name: season.name.trim(), id }] }))
+          return id
+        },
+        updateSeason: (id, patch) =>
+          set((st) => ({ seasons: st.seasons.map((x) => (x.id === id ? { ...x, ...patch } : x)) })),
+        deleteSeason: (id) => set((st) => ({ seasons: st.seasons.filter((x) => x.id !== id) })),
+
         startScheduled: (id) =>
           set((st) => {
             const game = st.schedule.find((g) => g.id === id)
@@ -781,7 +803,7 @@ export const useStore = create<State>()(
 
         resetSession: () => set((st) => ({ session: newSession(st.session) })),
 
-        clearAll: () => set({ players: [], session: newSession(), history: [], schedule: [] }),
+        clearAll: () => set({ players: [], session: newSession(), history: [], schedule: [], seasons: [] }),
 
         importData: (data) =>
           set((st) => ({
@@ -789,6 +811,7 @@ export const useStore = create<State>()(
             session: data.session ? withShuttleTypes(data.session) : st.session,
             history: data.history?.map(redate) ?? st.history,
             schedule: data.schedule ?? st.schedule,
+            seasons: data.seasons ?? st.seasons,
           })),
       }
     },

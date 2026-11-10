@@ -5,8 +5,8 @@ export const LAST_BACKUP_KEY = 'mbq-last-backup'
 
 /** Downloads everything as a JSON backup file; returns when, also remembered as the last backup. */
 export function exportBackup() {
-  const { players, session, history, schedule } = useStore.getState()
-  const blob = new Blob([JSON.stringify({ app: 'mbq', version: 1, players, session, history, schedule }, null, 2)], {
+  const { players, session, history, schedule, seasons } = useStore.getState()
+  const blob = new Blob([JSON.stringify({ app: 'mbq', version: 1, players, session, history, schedule, seasons }, null, 2)], {
     type: 'application/json',
   })
   const a = document.createElement('a')

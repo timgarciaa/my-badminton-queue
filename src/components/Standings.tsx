@@ -1,5 +1,5 @@
-import { shareImage, standingsImage } from '../lib/shareImage'
-import { ordinal, places, standings } from '../lib/stats'
+import { shareImage, standingsImage, winsImage } from '../lib/shareImage'
+import { ordinal, places, standings, winsPlaces, winsStandings } from '../lib/stats'
 import { usePlayerMap } from '../store/useStore'
 import type { Game } from '../types'
 import { PlayerTags } from './ui'
@@ -127,6 +127,85 @@ export function Standings({
                     {s.rate !== null && (
                       <progress className="d-progress d-progress-success ml-auto block h-1 w-full" value={s.rate} max={1} />
                     )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
+  )
+}
+
+/**
+ * Wins leaderboard: players with at least one win, by wins alone, with no
+ * losses or win %. Share sends it as an image.
+ */
+export function WinsStandings({
+  games,
+  title,
+  subtitle,
+  filename,
+  className = '',
+}: {
+  games: Game[]
+  /** For the shared image, e.g. "All-time wins". */
+  title: string
+  subtitle: string
+  filename: string
+  className?: string
+}) {
+  const players = usePlayerMap()
+  const name = (id: string) => players.get(id)?.name ?? ''
+  const ranked = winsStandings(games, name).filter((r) => players.has(r.id))
+  const place = winsPlaces(ranked)
+  const most = Math.max(1, ...ranked.map((r) => r.wins))
+
+  const share = () => {
+    const rows = ranked.map((r, i) => ({ name: name(r.id), wins: r.wins, place: place[i] }))
+    void shareImage(winsImage(rows, { title, subtitle }), filename, title)
+  }
+
+  return (
+    <section className={`d-card d-card-border bg-base-100 shadow-sm flex flex-col overflow-hidden ${className}`}>
+      <div className="flex items-center justify-between gap-2 border-b border-slate-100 px-4 py-3">
+        <div>
+          <h2 className="text-lg font-bold">Wins</h2>
+          <p className="text-xs text-slate-500">Ranked by games won only</p>
+        </div>
+        <button className="d-btn d-btn-primary d-btn-soft h-11" disabled={ranked.length === 0} onClick={share}>
+          <ShareIcon />
+          Share
+        </button>
+      </div>
+      {ranked.length === 0 ? (
+        <p className="p-5 text-slate-500">No wins yet.</p>
+      ) : (
+        <div className="overflow-y-auto">
+          <table className="d-table d-table-pin-rows d-table-sm w-full table-fixed tabular-nums">
+            <thead>
+              <tr className="bg-white">
+                <th className="w-16">#</th>
+                <th>Player</th>
+                <th className="w-32 text-right">Wins</th>
+              </tr>
+            </thead>
+            <tbody>
+              {ranked.map((r, i) => (
+                <tr key={r.id}>
+                  <PlaceCell places={place} i={i} />
+                  <td>
+                    <span className="flex items-center gap-2">
+                      <span className="min-w-0 truncate text-base font-semibold" title={name(r.id)}>
+                        {name(r.id)}
+                      </span>
+                      <PlayerTags player={players.get(r.id)!} />
+                    </span>
+                  </td>
+                  <td className="text-right">
+                    <span className="text-base font-bold text-amber-700">{r.wins}</span>
+                    <progress className="d-progress d-progress-warning ml-auto block h-1 w-full" value={r.wins} max={most} />
                   </td>
                 </tr>
               ))}

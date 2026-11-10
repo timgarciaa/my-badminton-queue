@@ -8,7 +8,7 @@ import { clash, dueGame, timeRange, upcoming, weekly } from './schedule'
 import { checkSchedule } from './useScheduleClock'
 import { findPlayer, publicPath } from './publicStats'
 import { matchSkill, planGames, winnersStayGame } from './plan'
-import { arrivals, bestRecord, blowoutGames, deuceGames, scoreLeader, checkinPlaces, checkinStandings, duoRecords, form, mateRecords, mostOften, gameExtremes, gameTime, helpFrom, ordinal, places, playedGames, sessionsWithin, standings, playerRecords, rivalries, streaks, winRate, worstRecord } from './stats'
+import { arrivals, bestRecord, blowoutGames, deuceGames, scoreLeader, checkinPlaces, checkinStandings, duoRecords, form, mateRecords, mostOften, gameExtremes, gameTime, helpFrom, ordinal, places, playedGames, sessionsWithin, standings, playerRecords, rivalries, streaks, winRate, winsPlaces, winsStandings, worstRecord } from './stats'
 import { dequeue, enqueue, move, nextFour, placeByArrival, pushFront, swap } from './queue'
 import { gapCounts, niceTicks, overall, playerDays, sessionTrend, sessionTrends } from './trends'
 import { isHelpStruggling, isSkillMatch, migrateStore, newSession, playedOn, redate, useStore } from '../store/useStore'
@@ -832,6 +832,20 @@ describe('stats dashboard', () => {
     // No wins and a 0% rate either way: fewer games ranks higher (g: 0-1 in 2 games, c: 0-3 in 3).
     const order = rows.map((r) => r.id)
     expect(order.indexOf('g')).toBeLessThan(order.indexOf('c'))
+  })
+
+  it('ranks the wins leaderboard by wins alone, ties by name, no winless players', () => {
+    const rows = winsStandings(games, (id) => id)
+    expect(rows.slice(0, 2)).toEqual([
+      { id: 'b', wins: 4 },
+      { id: 'a', wins: 3 },
+    ])
+    expect(rows.every((r) => r.wins > 0)).toBe(true)
+    expect(rows.some((r) => r.id === 'g' || r.id === 'c')).toBe(false)
+    // Same wins tie and are in name order, whatever their losses.
+    const tied = rows.filter((r) => r.wins === rows[rows.length - 1].wins).map((r) => r.id)
+    expect(tied).toEqual([...tied].sort())
+    expect(winsPlaces([{ id: 'x', wins: 3 }, { id: 'y', wins: 3 }, { id: 'z', wins: 1 }])).toEqual([1, 1, 2])
   })
 
   it('gives tied players the same place, then the next place', () => {
@@ -1746,5 +1760,45 @@ describe('graph numbers', () => {
     expect(niceTicks(0, 17)).toEqual([0, 5, 10, 15, 20])
     expect(niceTicks(-7, 12)).toEqual([-10, -5, 0, 5, 10, 15])
     expect(niceTicks(0, 0)).toEqual([0, 1])
+  })
+})
+
+describe('seasons', () => {
+  const day = (id: string, date: string) => ({ ...newSession(), id, date })
+  const list = [day('aug', '2026-08-31'), day('sep', '2026-09-01'), day('oct', '2026-10-15'), day('nov', '2026-11-30'), day('dec', '2026-12-01')]
+
+  it('covers sessions from the first day to the last, both included', async () => {
+    const { sessionsBetween } = await import('./scope')
+    expect(sessionsBetween(list, { from: '2026-09-01', to: '2026-11-30' }).map((s) => s.id)).toEqual(['sep', 'oct', 'nov'])
+    expect(sessionsBetween(list, { from: '2026-12-02', to: '2026-12-31' })).toEqual([])
+  })
+
+  it('writes the year once when both days are in the same year', async () => {
+    const { rangeLabel } = await import('./scope')
+    expect(rangeLabel({ from: '2026-09-01', to: '2026-11-30' })).not.toMatch(/2026.*2026/)
+    expect(rangeLabel({ from: '2025-12-01', to: '2026-02-28' })).toMatch(/2025.*2026/)
+  })
+
+  it('saves, renames and deletes a season, and clears them with all data', () => {
+    useStore.setState({ seasons: [] })
+    const st = useStore.getState()
+    const id = st.addSeason({ name: ' Season 1 ', from: '2026-09-01', to: '2026-11-30' })
+    expect(useStore.getState().seasons).toEqual([{ id, name: 'Season 1', from: '2026-09-01', to: '2026-11-30' }])
+    st.updateSeason(id, { name: 'Spring', to: '2026-11-15' })
+    expect(useStore.getState().seasons[0]).toMatchObject({ name: 'Spring', to: '2026-11-15' })
+    st.deleteSeason(id)
+    expect(useStore.getState().seasons).toEqual([])
+    st.addSeason({ name: 'S2', from: '2026-12-01', to: '2027-02-28' })
+    st.clearAll()
+    expect(useStore.getState().seasons).toEqual([])
+  })
+
+  it('saves seasons to the club only when there are any', async () => {
+    const { fromDocs, toDocs } = await import('./cloud')
+    const base = { players: [], session: newSession(), history: [] }
+    expect(Object.keys(toDocs({ ...base, seasons: [] }))).not.toContain('seasons')
+    const seasons = [{ id: 's', name: 'Season 1', from: '2026-09-01', to: '2026-11-30' }]
+    expect(fromDocs(toDocs({ ...base, seasons })).seasons).toEqual(seasons)
+    expect(fromDocs(toDocs(base)).seasons).toEqual([])
   })
 })

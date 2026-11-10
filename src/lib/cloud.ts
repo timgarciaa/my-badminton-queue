@@ -2,7 +2,7 @@ import { useEffect } from 'react'
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { newSession, useStore } from '../store/useStore'
-import type { Player, ScheduledGame, Session } from '../types'
+import type { Player, ScheduledGame, Season, Session } from '../types'
 import { CHECKIN_API } from './remoteCheckin'
 
 /**
@@ -125,13 +125,16 @@ export interface ClubData {
   history: Session[]
   /** Missing in data from before games could be scheduled. */
   schedule?: ScheduledGame[]
+  /** Missing in data from before seasons. */
+  seasons?: Season[]
 }
 
-/** players, session, h#<id> for each past session, and schedule (when there is one), as JSON. */
+/** players, session, h#<id> for each past session, and schedule and seasons (when there are any), as JSON. */
 export function toDocs(d: ClubData): Record<string, string> {
   const docs: Record<string, string> = { players: JSON.stringify(d.players), session: JSON.stringify(d.session) }
   for (const s of d.history) docs[`h#${s.id}`] = JSON.stringify(s)
   if (d.schedule?.length) docs.schedule = JSON.stringify(d.schedule)
+  if (d.seasons?.length) docs.seasons = JSON.stringify(d.seasons)
   return docs
 }
 
@@ -149,6 +152,7 @@ export function fromDocs(docs: Record<string, string>): Partial<ClubData> & { pl
     ...(docs.session && { session: JSON.parse(docs.session) as Session }),
     history,
     schedule: docs.schedule ? (JSON.parse(docs.schedule) as ScheduledGame[]) : [],
+    seasons: docs.seasons ? (JSON.parse(docs.seasons) as Season[]) : [],
   }
 }
 
@@ -295,7 +299,7 @@ export function useCloudSync() {
     void refreshWaiting()
     const requests = window.setInterval(() => document.visibilityState === 'visible' && void refreshWaiting(), 5 * 60_000)
     const unsubscribe = useStore.subscribe((st, prev) => {
-      if (st.players !== prev.players || st.session !== prev.session || st.history !== prev.history || st.schedule !== prev.schedule) {
+      if (st.players !== prev.players || st.session !== prev.session || st.history !== prev.history || st.schedule !== prev.schedule || st.seasons !== prev.seasons) {
         scheduleSave()
       }
     })

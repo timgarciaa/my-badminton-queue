@@ -57,6 +57,26 @@ export function standings(games: Game[]): Standing[] {
     .sort((a, b) => b.wins - a.wins || (b.rate ?? -1) - (a.rate ?? -1) || a.played - b.played)
 }
 
+/** A player on the wins leaderboard. */
+export interface WinsRow {
+  id: string
+  wins: number
+}
+
+/**
+ * Players with at least one win, most first. Losses play no part: players on
+ * the same wins tie and are listed by name, so the order hints at nothing else.
+ */
+export function winsStandings(games: Game[], name: (id: string) => string): WinsRow[] {
+  return [...playerRecords(games)]
+    .filter(([, r]) => r.wins > 0)
+    .map(([id, r]) => ({ id, wins: r.wins }))
+    .sort((a, b) => b.wins - a.wins || name(a.id).localeCompare(name(b.id)))
+}
+
+/** Wins leaderboard places: the same wins share a place (1, 1, 2...). */
+export const winsPlaces = (rows: WinsRow[]) => placesBy(rows, (r) => String(r.wins))
+
 /**
  * Places for ranked standings: players with the same wins and losses tie and
  * share a place, and the next record takes the next place (1, 1, 2, 3, 3...).

@@ -1,6 +1,6 @@
-import type { Scope } from '../lib/scope'
+import { rangeLabel, seasonScope, sessionsBetween, type Scope } from '../lib/scope'
 import { longDate } from '../lib/stats'
-import type { Session } from '../types'
+import type { Season, Session } from '../types'
 
 const played = (list: Session[]) => list.filter((s) => s.games.length).length
 const clock = (ms: number) => new Date(ms).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
@@ -13,6 +13,7 @@ export function SessionSelect({
   history,
   all,
   recent,
+  seasons,
   current = 'Today (current)',
   className = '',
 }: {
@@ -22,6 +23,8 @@ export function SessionSelect({
   history: Session[]
   all: Session[]
   recent: Session[]
+  /** Saved seasons, and a "Pick dates" option; left out where dates can't be picked. */
+  seasons?: Season[]
   /** The open session's name; leave it out when null. */
   current?: string | null
   className?: string
@@ -35,6 +38,20 @@ export function SessionSelect({
     >
       <option value="all">All time · {played(all)} sessions</option>
       <option value="3m">Last 3 months · {played(recent)} sessions</option>
+      {seasons && (
+        <>
+          <option value="range">Pick dates…</option>
+          {seasons.length > 0 && (
+            <optgroup label="Seasons">
+              {[...seasons].sort((a, b) => b.from.localeCompare(a.from)).map((x) => (
+                <option key={x.id} value={seasonScope(x.id)}>
+                  {x.name} · {rangeLabel(x)} · {played(sessionsBetween(all, x))} sessions
+                </option>
+              ))}
+            </optgroup>
+          )}
+        </>
+      )}
       {current !== null && (
         <option value={session.id}>
           {current} · {session.games.length} games

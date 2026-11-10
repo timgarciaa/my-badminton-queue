@@ -365,6 +365,75 @@ export function standingsImage(rows: StandingRow[], { title, subtitle }: { title
   return png(c)
 }
 
+export interface WinsImageRow {
+  name: string
+  wins: number
+  place: number
+}
+
+/**
+ * The wins leaderboard as a PNG: a gold header with a shuttle and confetti,
+ * then each player's wins with a bar against the leader. No losses shown.
+ */
+export function winsImage(rows: WinsImageRow[], { title, subtitle }: { title: string; subtitle: string }): Blob {
+  const [c, ctx] = canvas(W, HEAD + 70 + rows.length * ROW + FOOT)
+  const text = writer(ctx)
+
+  ctx.fillStyle = '#ffffff'
+  ctx.fillRect(0, 0, W, c.height)
+  const head = ctx.createLinearGradient(0, 0, W, HEAD)
+  head.addColorStop(0, '#78350f')
+  head.addColorStop(0.55, '#b45309')
+  head.addColorStop(1, '#f59e0b')
+  ctx.fillStyle = head
+  ctx.fillRect(0, 0, W, HEAD)
+  ctx.save()
+  ctx.beginPath()
+  ctx.rect(0, 0, W, HEAD)
+  ctx.clip()
+  court(ctx, 640, -120, 300, 620, -0.35, 'rgba(255,255,255,0.16)', 4)
+  confetti(ctx, 560, 10, 500, HEAD - 20, ['#fef3c7', '#ffffff', '#fde68a', '#99f6e4'], 26, 11)
+  flyingShuttle(ctx, 985, 70, 150, '#b45309', 'rgba(255,255,255,0.35)')
+  ctx.restore()
+
+  ctx.textBaseline = 'alphabetic'
+  text(brand(), PAD, 76, 28, 'rgba(255,255,255,0.8)')
+  text(title, PAD, 160, 66, '#ffffff', 800)
+  text(subtitle, PAD, 214, 30, 'rgba(255,255,255,0.88)', 500)
+
+  // Columns: rank, name, a bar against the leader, wins.
+  const col = { rank: PAD + 26, name: PAD + 92, bar: 600, barEnd: W - PAD - 110, wins: W - PAD }
+  const y = HEAD + 50
+  ctx.textBaseline = 'middle'
+  text('#', col.rank, y, 24, '#64748b', 700, 'center')
+  text('Player', col.name, y, 24, '#64748b', 700)
+  text('Wins', col.wins, y, 24, '#64748b', 700, 'right')
+
+  const top = y + 20
+  const most = Math.max(1, ...rows.map((r) => r.wins))
+  stripes(ctx, rows.length, top)
+  placeBadges(ctx, rows.map((r) => r.place), col.rank, top)
+  rows.forEach((r, i) => {
+    const mid = top + i * ROW + ROW / 2
+    ctx.font = `600 34px ${FONT}`
+    text(fit(ctx, r.name, col.bar - col.name - 30), col.name, mid, 34, '#0f172a')
+    const full = col.barEnd - col.bar
+    ctx.fillStyle = '#fef3c7'
+    ctx.beginPath()
+    ctx.roundRect(col.bar, mid - 9, full, 18, 9)
+    ctx.fill()
+    ctx.fillStyle = '#f59e0b'
+    ctx.beginPath()
+    ctx.roundRect(col.bar, mid - 9, Math.max(18, (full * r.wins) / most), 18, 9)
+    ctx.fill()
+    text(String(r.wins), col.wins, mid, 36, '#b45309', 800, 'right')
+  })
+
+  ctx.textBaseline = 'alphabetic'
+  text('Ranked by games won · same wins = same place', PAD, c.height - 45, 24, '#94a3b8', 500)
+  return png(c)
+}
+
 export interface CheckinImageRow {
   name: string
   place: number
