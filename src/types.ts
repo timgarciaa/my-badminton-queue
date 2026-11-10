@@ -29,6 +29,11 @@ export interface Attendee {
   paid: boolean
   /** Present but sitting out (resting or left early); still pays. */
   resting: boolean
+  /**
+   * Per game or fixed pricing: what they had paid. Games played after that,
+   * or a higher fee after a switch, are still owed. Missing: paid in full.
+   */
+  paidAmount?: number
 }
 
 export type Pair = [string, string]
@@ -63,6 +68,24 @@ export interface CourtBooking {
   hours: number
   /** Per court, per hour. */
   rate: number
+}
+
+/** How players pay. */
+export type PricingStyle = 'split' | 'perGame' | 'flat'
+
+/**
+ * How players pay, with the amounts for every style so switching back keeps
+ * what was entered. Missing on sessions that split the cost equally.
+ */
+export interface Pricing {
+  /** split: court fee and shuttles shared equally; perGame: a court fee plus a fee per game; flat: one fee, unlimited games. */
+  style: PricingStyle
+  /** Per game: each player's court fee, paid once. */
+  entry: number
+  /** Per game: what each player pays for each game they play. */
+  perGame: number
+  /** Flat: what each player pays, however many games. */
+  flat: number
 }
 
 export interface Game {
@@ -143,6 +166,8 @@ export interface Session {
   shuttlePrice: number
   /** Manual adjustment on sessions from before shuttle types; see ShuttleType.extra. */
   extraShuttles: number
+  /** How players pay; missing means the cost is split equally. */
+  pricing?: Pricing
   /** Shuttle types with their prices. Missing on older sessions, which use shuttlePrice. */
   shuttleTypes?: ShuttleType[]
   /**

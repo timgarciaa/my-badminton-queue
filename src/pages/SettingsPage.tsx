@@ -1,12 +1,72 @@
 import { useRef, useState } from 'react'
 import { exportBackup, LAST_BACKUP_KEY } from '../lib/backup'
-import { costSummary, money } from '../lib/cost'
+import { costSummary, dueFor, money, pricingOf } from '../lib/cost'
 import { longDate } from '../lib/stats'
 import { ClubAccountCard } from '../components/Cloud'
-import { EmptyState } from '../components/ui'
+import { EmptyState, MoneyField } from '../components/ui'
 import { useCloud } from '../lib/cloud'
 import { usePlayerMap, useStore } from '../store/useStore'
-import type { Session } from '../types'
+import type { PricingStyle, Session } from '../types'
+
+const STYLES: { id: PricingStyle; label: string; hint: string }[] = [
+  { id: 'split', label: 'Split', hint: 'Costs shared equally' },
+  { id: 'perGame', label: 'Per game', hint: 'Court fee + each game' },
+  { id: 'flat', label: 'Fixed', hint: 'One fee, unli games' },
+]
+
+/** How players pay (split, per game or a fixed fee) and the amounts. */
+function PricingCard() {
+  const session = useStore((s) => s.session)
+  const setPricing = useStore((s) => s.setPricing)
+  const p = pricingOf(session)
+
+  return (
+    <div className="d-card d-card-border bg-base-100 shadow-sm">
+      <div className="d-card-body gap-3 p-4">
+        <h2 className="d-card-title text-lg">How players pay</h2>
+        <div role="radiogroup" aria-label="How players pay" className="grid grid-cols-3 gap-1.5">
+          {STYLES.map((o) => {
+            const on = p.style === o.id
+            return (
+              <button
+                key={o.id}
+                role="radio"
+                aria-checked={on}
+                className={`rounded-xl px-2 py-2 text-left ring-1 transition active:scale-[0.97] ${
+                  on ? 'bg-teal-50 ring-2 ring-teal-600' : 'bg-white ring-slate-200'
+                }`}
+                onClick={() => setPricing({ style: o.id })}
+              >
+                <span className={`block text-sm font-bold ${on ? 'text-teal-800' : 'text-slate-800'}`}>{o.label}</span>
+                <span className="block text-xs leading-snug text-slate-500">{o.hint}</span>
+              </button>
+            )
+          })}
+        </div>
+        {p.style === 'split' && (
+          <p className="text-sm text-slate-600">The court fee and shuttles are shared equally by everyone checked in.</p>
+        )}
+        {p.style === 'perGame' && (
+          <>
+            <div className="grid grid-cols-2 gap-3">
+              <MoneyField label="Court fee, once" value={p.entry} onChange={(n) => setPricing({ entry: n })} />
+              <MoneyField label="Each game" value={p.perGame} onChange={(n) => setPricing({ perGame: n })} />
+            </div>
+            <p className="text-sm text-slate-500 tabular-nums">
+              {[2, 4, 6].map((n) => `${n} games ${money(dueFor(p, n))}`).join(' · ')}
+            </p>
+          </>
+        )}
+        {p.style === 'flat' && (
+          <MoneyField label="Per player, unlimited games" value={p.flat} onChange={(n) => setPricing({ flat: n })} />
+        )}
+        <p className="text-xs text-slate-500">
+          Applies to today&apos;s session; the next session starts with the same style and amounts.
+        </p>
+      </div>
+    </div>
+  )
+}
 
 const readLastBackup = () => {
   try {
@@ -60,6 +120,7 @@ export function SettingsPage() {
     <div className="grid h-full grid-cols-[22rem_1fr] gap-5 p-5">
       <div className="space-y-4 overflow-y-auto">
         <ClubAccountCard />
+        <PricingCard />
         <div className="d-card d-card-border bg-base-100 shadow-sm">
           <div className="d-card-body gap-3 p-4">
             <h2 className="d-card-title text-lg">Backup</h2>
@@ -148,7 +209,7 @@ function History({ sessions }: { sessions: Session[] }) {
   const players = usePlayerMap()
   const [open, setOpen] = useState<string | null>(null)
   const summaries = sessions.map((s) => ({ s, c: costSummary(s) }))
-  const collected = summaries.reduce((n, { s, c }) => n + s.attendees.filter((a) => a.paid).length * c.perHead, 0)
+  const collected = summaries.reduce((n, { c }) => n + c.collected, 0)
   const avg = (f: (x: (typeof summaries)[number]) => number) =>
     summaries.length ? summaries.reduce((n, x) => n + f(x), 0) / summaries.length : 0
 
@@ -196,9 +257,11 @@ function History({ sessions }: { sessions: Session[] }) {
               </thead>
               <tbody>
                 {summaries.map(({ s, c }) => {
-                  const paid = s.attendees.filter((a) => a.paid).length
+                  const paid = c.paidCount
                   const expanded = open === s.id
-                  const unpaid = s.attendees.filter((a) => !a.paid).map((a) => players.get(a.playerId)?.name ?? '?')
+                  const unpaid = c.dues
+                    .filter((d) => d.owing > 0 || !s.attendees.find((a) => a.playerId === d.playerId)?.paid)
+                    .map((d) => players.get(d.playerId)?.name ?? '?')
                   return [
                     <tr
                       key={s.id}
@@ -213,7 +276,10 @@ function History({ sessions }: { sessions: Session[] }) {
                       <td className="text-right">{s.games.length}</td>
                       <td className="text-right">{c.shuttlesUsed}</td>
                       <td className="text-right">{money(c.total)}</td>
-                      <td className="text-right font-semibold">{money(c.perHead)}</td>
+                      <td className="text-right font-semibold">
+                        {c.pricing.style === 'perGame' && <span className="mr-1 text-xs font-normal text-slate-400">avg</span>}
+                        {money(c.perHead)}
+                      </td>
                       <td className="text-right">
                         <span className={`d-badge d-badge-sm d-badge-soft ${paid === c.heads ? 'd-badge-success' : 'd-badge-warning'}`}>
                           {paid}/{c.heads}
@@ -233,6 +299,20 @@ function History({ sessions }: { sessions: Session[] }) {
                                 </p>
                               ))}
                             </div>
+                            {c.pricing.style !== 'split' && (
+                              <div>
+                                <p className="text-xs font-semibold text-slate-500 uppercase">Players paid</p>
+                                <p>
+                                  {c.pricing.style === 'perGame'
+                                    ? `${money(c.pricing.entry)} + ${money(c.pricing.perGame)} a game`
+                                    : `${money(c.pricing.flat)} each, unlimited games`}
+                                </p>
+                                <p>Due {money(c.expected)}</p>
+                                <p className={c.margin >= 0 ? 'text-emerald-700' : 'text-rose-700'}>
+                                  {money(Math.abs(c.margin))} {c.margin >= 0 ? 'over' : 'short of'} costs
+                                </p>
+                              </div>
+                            )}
                             <div className="min-w-0 flex-1">
                               <p className="text-xs font-semibold text-slate-500 uppercase">
                                 {unpaid.length ? `Not paid (${unpaid.length})` : 'Payments'}

@@ -71,7 +71,11 @@ function Main() {
           <Stat label="Waiting" value={session.queue.length} />
           <Stat label="Playing" value={session.courts.filter(Boolean).length * 4} />
           <Stat label="Shuttles" value={c.shuttlesUsed} />
-          <Stat label="Per head" value={money(c.perHead)} />
+          {c.pricing.style === 'perGame' ? (
+            <Stat label="Per game" value={money(c.pricing.perGame)} />
+          ) : (
+            <Stat label="Per head" value={money(c.perHead)} />
+          )}
         </div>
       </header>
 

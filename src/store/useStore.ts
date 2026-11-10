@@ -1,12 +1,12 @@
 import { useMemo } from 'react'
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-import { courtBooking, courtFeeOf, gameShuttleType, sessionStarted, shuttlesInStock } from '../lib/cost'
+import { costSummary, courtBooking, courtFeeOf, gameShuttleType, pricingOf, sessionStarted, shuttlesInStock } from '../lib/cost'
 import { heldIds, isSetReady, setIds } from '../lib/plan'
 import { applySwap, dequeue, enqueue, move, placeByArrival, pushFront, swap } from '../lib/queue'
 import { scoreLeader } from '../lib/stats'
 import { clash } from '../lib/schedule'
-import type { Attendee, CourtBooking, Game, GameSwap, Gender, Pair, Player, ScheduledGame, Session, SetGame, ShuttleType, Skill } from '../types'
+import type { Attendee, CourtBooking, Game, GameSwap, Gender, Pair, Player, Pricing, ScheduledGame, Session, SetGame, ShuttleType, Skill } from '../types'
 
 /** A check-in made on a player's phone; ids starting with new- are names not on the list. */
 export interface PhoneCheckin {
@@ -60,6 +60,7 @@ export function newSession(
     | 'shuttleTypeId'
     | 'skillMatch'
     | 'helpStruggling'
+    | 'pricing'
   >,
 ): Session {
   const courtCount = prev?.courtCount ?? 2
@@ -82,6 +83,8 @@ export function newSession(
     shuttleTypeId,
     ...(prev?.skillMatch === false && { skillMatch: false }),
     ...(prev?.helpStruggling === false && { helpStruggling: false }),
+    // The club pays the same way as last time.
+    ...(prev?.pricing && { pricing: prev.pricing }),
     attendees: [],
     queue: [],
     courts: Array(courtCount).fill(null),
@@ -235,7 +238,10 @@ interface State {
   admitNewcomer: (checkin: PhoneCheckin, existingId?: string) => void
   /** Ignore a phone check-in. */
   dismissRemote: (id: string) => void
+  /** Mark paid or not paid; per game, a player who owes for games since they paid settles up. */
   togglePaid: (playerId: string) => void
+  /** Change how players pay, or its amounts. */
+  setPricing: (patch: Partial<Pricing>) => void
   moveInQueue: (playerId: string, delta: number) => void
   /**
    * Apply a manual change to the queue as shown: the first four become the
@@ -451,10 +457,34 @@ export const useStore = create<State>()(
           }),
 
         togglePaid: (playerId) =>
-          updateSession((s) => ({
-            ...s,
-            attendees: s.attendees.map((a) => (a.playerId === playerId ? { ...a, paid: !a.paid } : a)),
-          })),
+          updateSession((s) => {
+            const due = costSummary(s).dues.find((d) => d.playerId === playerId)
+            const split = pricingOf(s).style === 'split'
+            return {
+              ...s,
+              attendees: s.attendees.map((a) => {
+                if (a.playerId !== playerId || !due) return a
+                // Paid, but owes for games played since: settle up.
+                if (a.paid && due.owing > 0) return { ...a, paidAmount: due.amount }
+                if (a.paid) {
+                  const { paidAmount: _, ...rest } = a
+                  return { ...rest, paid: false }
+                }
+                return { ...a, paid: true, ...(!split && { paidAmount: due.amount }) }
+              }),
+            }
+          }),
+
+        setPricing: (patch) =>
+          updateSession((s) => {
+            const before = pricingOf(s)
+            const pricing = { ...before, ...patch }
+            const next = { ...s, pricing }
+            if (pricing.style === before.style || pricing.style === 'split') return next
+            // Players who already paid keep what they paid; anything more is still owed.
+            const dues = new Map(costSummary(s).dues.map((d) => [d.playerId, d.paid]))
+            return { ...next, attendees: s.attendees.map((a) => (a.paid ? { ...a, paidAmount: dues.get(a.playerId) } : a)) }
+          }),
 
         setManualOrder: (order, movedIds) =>
           updateSession((s) => {

@@ -2,7 +2,7 @@ import { costSummary, courtBooking, money, sessionStarted, shuttleCount, shuttle
 import { Fragment, useEffect, useState } from 'react'
 import { EmptyState, MoneyField, Stepper } from '../components/ui'
 import { usePlayerMap, useStore } from '../store/useStore'
-import type { ShuttleType } from '../types'
+import type { PricingStyle, ShuttleType } from '../types'
 
 type PayFilter = 'all' | 'unpaid' | 'paid'
 
@@ -15,11 +15,13 @@ export function CostsPage() {
   const [ending, setEnding] = useState(false)
 
   const c = costSummary(session)
-  const paidCount = session.attendees.filter((a) => a.paid).length
-  const collected = paidCount * c.perHead
-  const expected = c.heads * c.perHead
+  const dues = new Map(c.dues.map((d) => [d.playerId, d]))
+  const paid = new Set(session.attendees.filter((a) => a.paid).map((a) => a.playerId))
+  const settled = (playerId: string) => paid.has(playerId) && dues.get(playerId)!.owing === 0
+  const paidCount = c.paidCount
+  const perGame = c.pricing.style === 'perGame'
   const attendees = [...session.attendees]
-    .filter((a) => filter === 'all' || a.paid === (filter === 'paid'))
+    .filter((a) => filter === 'all' || settled(a.playerId) === (filter === 'paid'))
     // Stay in name order so a row doesn't jump away when it's tapped.
     .sort((a, b) => (players.get(a.playerId)?.name ?? '').localeCompare(players.get(b.playerId)?.name ?? ''))
   const live = session.courts.some(Boolean)
@@ -27,7 +29,7 @@ export function CostsPage() {
   return (
     <div className="grid h-full grid-cols-[22rem_1fr] gap-5 p-5">
       <div className="space-y-4 overflow-y-auto">
-        <PerHeadCard />
+        <PricingCard />
         <CourtFeeCard />
         <ShuttlesCard lines={c.shuttles} />
         <ShuttleCountCard />
@@ -64,7 +66,7 @@ export function CostsPage() {
         </div>
         {ending && (
           <EndSessionDialog
-            unpaid={session.attendees.filter((a) => !a.paid).map((a) => players.get(a.playerId)?.name ?? '?')}
+            unpaid={session.attendees.filter((a) => !settled(a.playerId)).map((a) => players.get(a.playerId)?.name ?? '?')}
             live={live}
             onCancel={() => setEnding(false)}
             onEnd={() => {
@@ -77,15 +79,15 @@ export function CostsPage() {
         <div className="d-stats rounded-none border-b border-slate-100">
           <div className="d-stat py-3">
             <div className="d-stat-title">Collected</div>
-            <div className="d-stat-value text-2xl text-emerald-700 tabular-nums">{money(collected)}</div>
+            <div className="d-stat-value text-2xl text-emerald-700 tabular-nums">{money(c.collected)}</div>
             <div className="d-stat-desc">
-              <progress className="d-progress d-progress-success w-full" value={paidCount} max={c.heads || 1} />
+              <progress className="d-progress d-progress-success w-full" value={c.collected} max={c.expected || 1} />
             </div>
           </div>
           <div className="d-stat py-3">
             <div className="d-stat-title">Still to collect</div>
-            <div className="d-stat-value text-2xl tabular-nums">{money(expected - collected)}</div>
-            <div className="d-stat-desc">of {money(expected)}</div>
+            <div className="d-stat-value text-2xl tabular-nums">{money(Math.max(0, c.expected - c.collected))}</div>
+            <div className="d-stat-desc">of {money(c.expected)}</div>
           </div>
           <div className="d-stat py-3">
             <div className="d-stat-title">Paid</div>
@@ -107,34 +109,46 @@ export function CostsPage() {
           </div>
         ) : (
           <ul className="grid flex-1 auto-rows-min grid-cols-2 gap-2 overflow-y-auto p-4">
-            {attendees.map((a) => (
-              <li key={a.playerId}>
-                <label
-                  className={`flex w-full cursor-pointer items-center gap-3 rounded-xl border px-3 py-2.5 transition active:scale-[0.98] ${
-                    a.paid ? 'border-emerald-300 bg-emerald-50' : 'border-slate-200 bg-white'
-                  }`}
-                >
-                  <input
-                    type="checkbox"
-                    className="d-checkbox d-checkbox-success"
-                    checked={a.paid}
-                    onChange={() => togglePaid(a.playerId)}
-                  />
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate text-lg leading-tight font-semibold">
-                      {players.get(a.playerId)?.name}
+            {attendees.map((a) => {
+              const d = dues.get(a.playerId)!
+              const done = settled(a.playerId)
+              // Paid, but has played since: owes for those games.
+              const more = d.paid > 0 && d.owing > 0
+              return (
+                <li key={a.playerId}>
+                  <label
+                    className={`flex w-full cursor-pointer items-center gap-3 rounded-xl border px-3 py-2.5 transition active:scale-[0.98] ${
+                      done ? 'border-emerald-300 bg-emerald-50' : more ? 'border-amber-300 bg-amber-50' : 'border-slate-200 bg-white'
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      className={`d-checkbox ${more ? 'd-checkbox-warning' : 'd-checkbox-success'}`}
+                      checked={done}
+                      onChange={() => togglePaid(a.playerId)}
+                    />
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-lg leading-tight font-semibold">
+                        {players.get(a.playerId)?.name}
+                      </span>
+                      <span className={`block truncate text-xs ${more ? 'font-semibold text-amber-800' : 'text-slate-500'}`}>
+                        {more
+                          ? `Paid ${money(d.paid)} so far`
+                          : `${d.games} ${d.games === 1 ? 'game' : 'games'}${
+                              perGame && d.games ? ` · ${money(c.pricing.entry)} + ${d.games} × ${money(c.pricing.perGame)}` : ''
+                            }${done ? ' · paid' : ''}`}
+                      </span>
                     </span>
-                    <span className="text-xs text-slate-500">
-                      {a.gamesPlayed} {a.gamesPlayed === 1 ? 'game' : 'games'}
-                      {a.paid && ' · paid'}
+                    <span className="text-right">
+                      <span className={`block text-lg leading-tight font-bold tabular-nums ${done ? 'text-emerald-700' : ''}`}>
+                        {money(more ? d.owing : d.amount)}
+                      </span>
+                      {more && <span className="block text-xs text-amber-800">more</span>}
                     </span>
-                  </span>
-                  <span className={`text-lg font-bold tabular-nums ${a.paid ? 'text-emerald-700' : ''}`}>
-                    {money(c.perHead)}
-                  </span>
-                </label>
-              </li>
-            ))}
+                  </label>
+                </li>
+              )
+            })}
           </ul>
         )}
       </div>
@@ -194,12 +208,16 @@ function CourtFeeCard() {
   const session = useStore((s) => s.session)
   const setBooking = useStore((s) => s.setCourtBooking)
   const b = courtBooking(session)
+  const split = (session.pricing?.style ?? 'split') === 'split'
   const row = 'flex items-center justify-between gap-2'
   const label = 'text-sm font-medium text-slate-500'
 
   return (
     <div className="d-card d-card-border bg-base-100 shadow-sm space-y-3 p-5">
-      <h2 className="text-lg font-bold">Court fee</h2>
+      <div>
+        <h2 className="text-lg font-bold">{split ? 'Court fee' : 'Court booking'}</h2>
+        {!split && <p className="text-sm text-slate-500">What the club pays for the courts</p>}
+      </div>
       <div className={row}>
         <span className={label}>Courts</span>
         <Stepper value={b.courts} min={1} max={12} onChange={(n) => setBooking({ courts: n })} />
@@ -219,8 +237,78 @@ function CourtFeeCard() {
   )
 }
 
-/** What each player pays, split into court fee, each shuttle type, and rounding. */
-function PerHeadCard() {
+const STYLE_NAME: Record<PricingStyle, string> = { split: 'Split equally', perGame: 'Per game', flat: 'Fixed fee' }
+
+/** What each player pays under the style picked in Settings, and what that comes to. */
+function PricingCard() {
+  const session = useStore((s) => s.session)
+  const c = costSummary(session)
+  const p = c.pricing
+  const players = `${c.heads} ${c.heads === 1 ? 'player' : 'players'}`
+
+  return (
+    <div className="d-card d-card-border bg-base-100 shadow-sm overflow-hidden">
+      <div className="bg-teal-700 px-5 py-4 text-white">
+        <p className="text-sm font-semibold opacity-80">{p.style === 'split' ? 'Per head' : 'Each player pays'}</p>
+        <p className="text-4xl font-black tabular-nums">
+          {p.style === 'perGame' ? (
+            <>
+              {money(p.entry)}
+              <span className="text-2xl font-bold opacity-90"> + {money(p.perGame)} a game</span>
+            </>
+          ) : (
+            money(c.perHead)
+          )}
+        </p>
+        <p className="text-sm opacity-80">
+          {p.style === 'split'
+            ? `${money(c.total)} total · ${players}`
+            : `${money(c.expected)} from ${players}${p.style === 'perGame' && c.heads ? ` · avg ${money(c.perHead)}` : ''}`}
+        </p>
+      </div>
+
+      {p.style === 'split' ? (
+        <SplitLines />
+      ) : (
+        <div className="px-5 py-4">
+          <ClubBalance />
+        </div>
+      )}
+      <p className="border-t border-slate-100 px-5 py-2.5 text-xs text-slate-500">
+        {STYLE_NAME[p.style]} · change how players pay in <strong>Settings</strong>
+      </p>
+    </div>
+  )
+}
+
+/** What players pay against what the club pays for courts and shuttles. */
+function ClubBalance() {
+  const session = useStore((s) => s.session)
+  const c = costSummary(session)
+  const keeps = c.margin >= 0
+  return (
+    <ul className="space-y-1 rounded-xl bg-slate-50 px-3 py-2.5 text-sm ring-1 ring-slate-200">
+      <li className="flex items-baseline gap-2">
+        <span className="font-semibold text-slate-700">Players pay</span>
+        <span className="ml-auto font-semibold tabular-nums">{money(c.expected)}</span>
+      </li>
+      <li className="flex items-baseline gap-2 text-slate-600">
+        <span>Court and shuttles</span>
+        <span className="text-xs text-slate-400">
+          {money(session.courtFee)} + {money(c.shuttleCost)}
+        </span>
+        <span className="ml-auto tabular-nums">−{money(c.total)}</span>
+      </li>
+      <li className={`flex items-baseline gap-2 border-t border-slate-200 pt-1 font-bold ${keeps ? 'text-emerald-700' : 'text-rose-700'}`}>
+        <span>{keeps ? 'Club keeps' : 'Club is short'}</span>
+        <span className="ml-auto tabular-nums">{money(Math.abs(c.margin))}</span>
+      </li>
+    </ul>
+  )
+}
+
+/** Split: each player's share of the court fee, each shuttle type, and rounding. */
+function SplitLines() {
   const session = useStore((s) => s.session)
   const c = costSummary(session)
   const each = (n: number) => (c.heads ? n / c.heads : 0)
@@ -236,35 +324,26 @@ function PerHeadCard() {
   const cents = (n: number) => money(Math.round(n * 100) / 100)
 
   return (
-    <div className="d-card d-card-border bg-base-100 shadow-sm overflow-hidden">
-      <div className="bg-teal-700 px-5 py-4 text-white">
-        <p className="text-sm font-semibold opacity-80">Per head</p>
-        <p className="text-4xl font-black tabular-nums">{money(c.perHead)}</p>
-        <p className="text-sm opacity-80">
-          {money(c.total)} total · {c.heads} {c.heads === 1 ? 'player' : 'players'}
-        </p>
-      </div>
-      <ul className="space-y-1.5 px-5 py-3 text-sm">
-        {lines.map((l) => (
-          <li key={l.label} className="flex items-baseline gap-2">
-            <span className="font-semibold text-slate-700">{l.label}</span>
-            <span className="text-xs text-slate-400">{l.detail}</span>
-            <span className="ml-auto font-semibold tabular-nums">{cents(l.value)}</span>
-          </li>
-        ))}
-        {rounding > 0.004 && (
-          <li className="flex items-baseline gap-2 text-slate-500">
-            <span>Rounded up</span>
-            <span className="text-xs text-slate-400">{money(c.surplus)} extra in total</span>
-            <span className="ml-auto tabular-nums">+{cents(rounding)}</span>
-          </li>
-        )}
-        <li className="flex items-baseline border-t border-slate-200 pt-1.5 font-bold">
-          <span>Each pays</span>
-          <span className="ml-auto tabular-nums">{money(c.perHead)}</span>
+    <ul className="space-y-1.5 px-5 py-3 text-sm">
+      {lines.map((l) => (
+        <li key={l.label} className="flex items-baseline gap-2">
+          <span className="font-semibold text-slate-700">{l.label}</span>
+          <span className="text-xs text-slate-400">{l.detail}</span>
+          <span className="ml-auto font-semibold tabular-nums">{cents(l.value)}</span>
         </li>
-      </ul>
-    </div>
+      ))}
+      {rounding > 0.004 && (
+        <li className="flex items-baseline gap-2 text-slate-500">
+          <span>Rounded up</span>
+          <span className="text-xs text-slate-400">{money(c.surplus)} extra in total</span>
+          <span className="ml-auto tabular-nums">+{cents(rounding)}</span>
+        </li>
+      )}
+      <li className="flex items-baseline border-t border-slate-200 pt-1.5 font-bold">
+        <span>Each pays</span>
+        <span className="ml-auto tabular-nums">{money(c.perHead)}</span>
+      </li>
+    </ul>
   )
 }
 

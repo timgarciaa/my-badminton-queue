@@ -1,4 +1,4 @@
-import type { CourtBooking, Game, Session } from '../types'
+import type { Attendee, CourtBooking, Game, Pricing, Session } from '../types'
 
 export interface ShuttleLine {
   id: string
@@ -11,19 +11,75 @@ export interface ShuttleLine {
   cost: number
 }
 
+/** What one player owes and has paid. */
+export interface Due {
+  playerId: string
+  /** Games they've been on court for, the one they're playing included. */
+  games: number
+  /** What they owe in all. */
+  amount: number
+  /** What they've paid so far. */
+  paid: number
+  /** Still to pay. */
+  owing: number
+}
+
 export interface CostSummary {
+  pricing: Pricing
   shuttlesUsed: number
   /** Shuttles and cost per shuttle type. */
   shuttles: ShuttleLine[]
   shuttleCost: number
+  /** What the session costs the club: court fee and shuttles. */
   total: number
   heads: number
   /** Exact share, to the cent. */
   perHeadExact: number
-  /** Share rounded up to the nearest roundTo (default: whole peso, no centavos). */
+  /**
+   * What each player pays. Split: the share rounded up to the nearest roundTo
+   * (default: whole peso, no centavos). Flat: the fee. Per game: the average.
+   */
   perHead: number
-  /** Extra collected because of rounding. */
+  /** Extra collected because of rounding (split). */
   surplus: number
+  /** Each checked-in player's amount, in check-in order. */
+  dues: Due[]
+  /** What players pay in all. */
+  expected: number
+  /** Paid so far. */
+  collected: number
+  /** Players who've paid everything they owe. */
+  paidCount: number
+  /** What players pay less what the session costs: kept by the club, or short when negative. */
+  margin: number
+}
+
+/** Split equally until a club picks another style. */
+export const SPLIT: Pricing = { style: 'split', entry: 0, perGame: 0, flat: 0 }
+
+export function pricingOf(session: Session): Pricing {
+  return session.pricing ?? SPLIT
+}
+
+/** Games each player has been on court for, the ones still on court included. */
+export function gamesOnCourt(session: Session): Map<string, number> {
+  const n = new Map<string, number>()
+  for (const g of session.games) for (const id of [...g.teamA, ...g.teamB]) n.set(id, (n.get(id) ?? 0) + 1)
+  return n
+}
+
+/** What a player owes under per game or flat pricing. */
+export function dueFor(pricing: Pricing, games: number): number {
+  return pricing.style === 'flat' ? pricing.flat : pricing.entry + games * pricing.perGame
+}
+
+/**
+ * What a paid player has handed over. A split share moves as shuttles are
+ * used, so paid there is paid in full; otherwise what they owed when marked paid.
+ */
+function paidOf(a: Attendee, amount: number, pricing: Pricing): number {
+  if (!a.paid) return 0
+  return pricing.style !== 'split' && a.paidAmount !== undefined ? a.paidAmount : amount
 }
 
 /** Shuttles used and their cost, per shuttle type. Older sessions have one unnamed type. */
@@ -126,14 +182,27 @@ export function shuttleCount(session: Session): ShuttleCount {
 }
 
 export function costSummary(session: Session, roundTo = 1): CostSummary {
+  const pricing = pricingOf(session)
   const shuttles = shuttleLines(session)
   const used = shuttles.reduce((n, l) => n + l.used, 0)
   const shuttleCost = shuttles.reduce((n, l) => n + l.cost, 0)
   const total = session.courtFee + shuttleCost
   const heads = session.attendees.length
   const perHeadExact = heads ? Math.round((total / heads) * 100) / 100 : 0
-  const perHead = heads ? Math.max(0, Math.ceil(total / heads / roundTo - 1e-9) * roundTo) : 0
+  const share = heads ? Math.max(0, Math.ceil(total / heads / roundTo - 1e-9) * roundTo) : 0
+  const games = gamesOnCourt(session)
+  const dues = session.attendees.map((a): Due => {
+    const n = games.get(a.playerId) ?? 0
+    const amount = pricing.style === 'split' ? share : dueFor(pricing, n)
+    const paid = paidOf(a, amount, pricing)
+    return { playerId: a.playerId, games: n, amount, paid, owing: Math.max(0, amount - paid) }
+  })
+  const sum = (f: (d: Due) => number) => Math.round(dues.reduce((n, d) => n + f(d), 0) * 100) / 100
+  const expected = sum((d) => d.amount)
+  const perHead =
+    pricing.style === 'split' ? share : pricing.style === 'flat' ? pricing.flat : heads ? Math.round(expected / heads) : 0
   return {
+    pricing,
     shuttlesUsed: used,
     shuttles,
     shuttleCost,
@@ -141,7 +210,12 @@ export function costSummary(session: Session, roundTo = 1): CostSummary {
     heads,
     perHeadExact,
     perHead,
-    surplus: Math.round((perHead * heads - total) * 100) / 100,
+    surplus: pricing.style === 'split' ? Math.round((share * heads - total) * 100) / 100 : 0,
+    dues,
+    expected,
+    collected: sum((d) => d.paid),
+    paidCount: session.attendees.filter((a, i) => a.paid && dues[i].owing === 0).length,
+    margin: Math.round((expected - total) * 100) / 100,
   }
 }
 

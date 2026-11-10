@@ -394,6 +394,97 @@ describe('cost', () => {
   })
 })
 
+describe('payment styles', () => {
+  const attendee = (playerId: string, paid = false) => ({ playerId, checkedInAt: 0, gamesPlayed: 0, paid, resting: false })
+  const game = (id: string, teamA: string[], teamB: string[], endedAt?: number) =>
+    ({ id, court: 1, teamA, teamB, startedAt: 0, endedAt, shuttles: 1 }) as Session['games'][number]
+  const base = (): Session => ({
+    ...newSession(),
+    courtFee: 400,
+    shuttleTypes: [{ id: 't', name: 'Shuttle', price: 80, extra: 0 }],
+    shuttleTypeId: 't',
+    attendees: ['a', 'b', 'c', 'd', 'e'].map((id) => attendee(id)),
+    // a plays 2 games (one still on court), e none.
+    games: [game('g1', ['a', 'b'], ['c', 'd'], 1), game('g2', ['a', 'b'], ['c', 'd'])],
+  })
+
+  it('splits equally when no style is picked', () => {
+    const c = costSummary(base())
+    expect(c.pricing.style).toBe('split')
+    expect(c.total).toBe(560)
+    expect(c.dues.map((d) => d.amount)).toEqual([112, 112, 112, 112, 112])
+    expect(c.margin).toBe(0)
+  })
+
+  it('charges a court fee plus each game played, the one on court included', () => {
+    const c = costSummary({ ...base(), pricing: { style: 'perGame', entry: 125, perGame: 35, flat: 200 } })
+    expect(c.dues.map((d) => [d.playerId, d.games, d.amount])).toEqual([
+      ['a', 2, 195],
+      ['b', 2, 195],
+      ['c', 2, 195],
+      ['d', 2, 195],
+      ['e', 0, 125],
+    ])
+    expect(c.expected).toBe(905)
+    expect(c.perHead).toBe(181) // the average
+    expect(c.margin).toBe(905 - 560)
+  })
+
+  it('charges one fee for unlimited games', () => {
+    const c = costSummary({ ...base(), pricing: { style: 'flat', entry: 0, perGame: 0, flat: 100 } })
+    expect(c.dues.every((d) => d.amount === 100)).toBe(true)
+    expect(c.perHead).toBe(100)
+    expect(c.margin).toBe(-60) // short of the court and shuttles
+  })
+
+  it('keeps a per game player owing for games after they paid, until they settle up', () => {
+    useStore.setState({ session: { ...base(), pricing: { style: 'perGame', entry: 125, perGame: 35, flat: 0 } } })
+    const st = useStore.getState()
+    const due = () => costSummary(useStore.getState().session).dues.find((d) => d.playerId === 'e')!
+    st.togglePaid('e')
+    expect(due()).toMatchObject({ amount: 125, paid: 125, owing: 0 })
+    useStore.setState((x) => ({ session: { ...x.session, games: [...x.session.games, game('g3', ['e', 'a'], ['b', 'c'])] } }))
+    expect(due()).toMatchObject({ amount: 160, paid: 125, owing: 35 })
+    expect(costSummary(useStore.getState().session).paidCount).toBe(0)
+    st.togglePaid('e') // settles up
+    expect(due()).toMatchObject({ paid: 160, owing: 0 })
+    st.togglePaid('e') // not paid after all
+    expect(due()).toMatchObject({ paid: 0, owing: 160 })
+    expect(useStore.getState().session.attendees.find((a) => a.playerId === 'e')!.paidAmount).toBeUndefined()
+  })
+
+  it('switching to per game keeps what players already paid, and owes the rest', () => {
+    // Split two ways: 280 each.
+    useStore.setState({ session: { ...base(), attendees: [attendee('a', true), attendee('e')] } })
+    useStore.getState().setPricing({ style: 'perGame', entry: 250, perGame: 30 })
+    const c = costSummary(useStore.getState().session)
+    expect(c.dues.map((d) => [d.playerId, d.amount, d.paid, d.owing])).toEqual([
+      ['a', 310, 280, 30],
+      ['e', 250, 0, 250],
+    ])
+  })
+
+  it('switching to a fixed fee keeps what was paid per game', () => {
+    useStore.setState({ session: { ...base(), pricing: { style: 'perGame', entry: 125, perGame: 35, flat: 200 } } })
+    useStore.getState().togglePaid('a') // 195
+    useStore.getState().setPricing({ style: 'flat' })
+    expect(costSummary(useStore.getState().session).dues[0]).toMatchObject({ amount: 200, paid: 195, owing: 5 })
+    useStore.getState().setPricing({ style: 'split' })
+    expect(costSummary(useStore.getState().session).dues[0]).toMatchObject({ amount: 112, owing: 0 })
+  })
+
+  it('keeps the amounts of other styles when switching, and carries the style to the next session', () => {
+    useStore.setState({ session: base() })
+    const st = useStore.getState()
+    st.setPricing({ style: 'flat', flat: 200 })
+    st.setPricing({ style: 'perGame', entry: 125, perGame: 35 })
+    st.setPricing({ style: 'flat' })
+    expect(useStore.getState().session.pricing).toEqual({ style: 'flat', entry: 125, perGame: 35, flat: 200 })
+    expect(newSession(useStore.getState().session).pricing).toEqual({ style: 'flat', entry: 125, perGame: 35, flat: 200 })
+    expect(newSession().pricing).toBeUndefined()
+  })
+})
+
 describe('shuttle count', () => {
   const game = (shuttles: number) =>
     ({ id: `g${shuttles}`, court: 1, teamA: ['a', 'b'], teamB: ['c', 'd'], startedAt: 0, shuttles }) as Session['games'][number]
