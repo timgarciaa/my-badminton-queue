@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Session } from '../types'
 import { bumpedPlayers, fairShare, meetCounts, metPairs, pairKey, partnerCounts, playStreaks, splitTeams, suggestSwap } from './balance'
-import { costSummary, courtBooking, money, sessionStarted, shuttleCount, shuttlesInStock } from './cost'
+import { byName, costSummary, courtBooking, money, sessionStarted, shuttleCount, shuttleLines, shuttlesInStock } from './cost'
 import type { Help } from './balance'
 import { parseNames } from './importNames'
 import { clash, dueGame, timeRange, upcoming, weekly } from './schedule'
@@ -453,6 +453,20 @@ describe('payment styles', () => {
     expect(useStore.getState().session.attendees.find((a) => a.playerId === 'e')!.paidAmount).toBeUndefined()
   })
 
+  it('marks a player paid in a past session, e.g. a day later, and back', () => {
+    const past = { ...base(), id: 'past', status: 'closed' as const }
+    const other = { ...base(), id: 'other' }
+    useStore.setState({ history: [past, other] })
+    useStore.getState().togglePaidInHistory('past', 'e')
+    const paid = () => useStore.getState().history.find((s) => s.id === 'past')!
+    expect(costSummary(paid()).dues.find((d) => d.playerId === 'e')).toMatchObject({ owing: 0 })
+    expect(costSummary(paid()).paidCount).toBe(1)
+    // Other sessions are left alone.
+    expect(useStore.getState().history[1]).toBe(other)
+    useStore.getState().togglePaidInHistory('past', 'e')
+    expect(costSummary(paid()).paidCount).toBe(0)
+  })
+
   it('switching to per game keeps what players already paid, and owes the rest', () => {
     // Split two ways: 280 each.
     useStore.setState({ session: { ...base(), attendees: [attendee('a', true), attendee('e')] } })
@@ -482,6 +496,31 @@ describe('payment styles', () => {
     expect(useStore.getState().session.pricing).toEqual({ style: 'flat', entry: 125, perGame: 35, flat: 200 })
     expect(newSession(useStore.getState().session).pricing).toEqual({ style: 'flat', entry: 125, perGame: 35, flat: 200 })
     expect(newSession().pricing).toBeUndefined()
+  })
+})
+
+describe('shuttle type order', () => {
+  it('lists shuttle types by name, numbers in order and unnamed last', () => {
+    const t = (name: string) => ({ name })
+    expect(byName([t('XP2'), t(''), t('Vortex'), t('Dmantis 2'), t('dmantis'), t('Dmantis 10')]).map((x) => x.name)).toEqual([
+      'dmantis', 'Dmantis 2', 'Dmantis 10', 'Vortex', 'XP2', '',
+    ])
+  })
+
+  it('still counts games without a type as the first type, whatever its name', () => {
+    const session: Session = {
+      ...newSession(),
+      shuttleTypes: [
+        { id: 'x', name: 'XP2', price: 90, extra: 0 },
+        { id: 'd', name: 'Dmantis', price: 80, extra: 0 },
+      ],
+      games: [{ id: 'g', court: 1, teamA: ['a', 'b'], teamB: ['c', 'd'], startedAt: 0, shuttles: 2 }],
+    }
+    expect(shuttleLines(session).map((l) => [l.name, l.used])).toEqual([
+      ['Dmantis', 0],
+      ['XP2', 2],
+    ])
+    expect(shuttleCount(session).lines.map((l) => l.name)).toEqual(['Dmantis', 'XP2'])
   })
 })
 

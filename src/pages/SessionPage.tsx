@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { allSplits, bumpedPlayers, fairShare, meetCounts, partnerCounts, playStreaks } from '../lib/balance'
-import { gameShuttleType, shuttlesInStock } from '../lib/cost'
+import { byName, gameShuttleType, shuttlesInStock } from '../lib/cost'
 import { matchSkill, planGames, winnersStayGame } from '../lib/plan'
 import { QueuePanel } from '../components/QueuePanel'
 import { clock, dayLabel, sameDay, upcoming } from '../lib/schedule'
@@ -387,7 +387,7 @@ function CourtCard({
                   value={gameShuttleType(session, game)}
                   onChange={(e) => setGameShuttleType(game.id, e.target.value)}
                 >
-                  {shuttleTypes.map((t) => {
+                  {byName(shuttleTypes).map((t) => {
                     // The game's shuttles move with it, so the type needs that many in stock.
                     const out = t.id !== gameShuttleType(session, game) && shuttlesInStock(session, t.id) < game.shuttles
                     return (

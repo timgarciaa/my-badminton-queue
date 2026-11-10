@@ -1,4 +1,4 @@
-import { rangeLabel, seasonScope, sessionsBetween, type Scope } from '../lib/scope'
+import { seasonScope, type Scope } from '../lib/scope'
 import { longDate } from '../lib/stats'
 import type { Season, Session } from '../types'
 
@@ -23,7 +23,7 @@ export function SessionSelect({
   history: Session[]
   all: Session[]
   recent: Session[]
-  /** Saved seasons, and a "Pick dates" option; left out where dates can't be picked. */
+  /** Saved seasons (by name; their dates show under the picker), and a "Pick dates" option; left out where dates can't be picked. */
   seasons?: Season[]
   /** The open session's name; leave it out when null. */
   current?: string | null
@@ -45,7 +45,7 @@ export function SessionSelect({
             <optgroup label="Seasons">
               {[...seasons].sort((a, b) => b.from.localeCompare(a.from)).map((x) => (
                 <option key={x.id} value={seasonScope(x.id)}>
-                  {x.name} · {rangeLabel(x)} · {played(sessionsBetween(all, x))} sessions
+                  {x.name}
                 </option>
               ))}
             </optgroup>

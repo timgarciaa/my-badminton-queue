@@ -204,6 +204,25 @@ function finishGame(
   }
 }
 
+/** Mark a player paid or not paid; per game, one who owes for games since they paid settles up. */
+function togglePaidIn(s: Session, playerId: string): Session {
+  const due = costSummary(s).dues.find((d) => d.playerId === playerId)
+  const split = pricingOf(s).style === 'split'
+  return {
+    ...s,
+    attendees: s.attendees.map((a) => {
+      if (a.playerId !== playerId || !due) return a
+      // Paid, but owes for games played since: settle up.
+      if (a.paid && due.owing > 0) return { ...a, paidAmount: due.amount }
+      if (a.paid) {
+        const { paidAmount: _, ...rest } = a
+        return { ...rest, paid: false }
+      }
+      return { ...a, paid: true, ...(!split && { paidAmount: due.amount }) }
+    }),
+  }
+}
+
 interface State {
   players: Player[]
   session: Session
@@ -242,6 +261,8 @@ interface State {
   dismissRemote: (id: string) => void
   /** Mark paid or not paid; per game, a player who owes for games since they paid settles up. */
   togglePaid: (playerId: string) => void
+  /** The same for a past session, e.g. someone who paid a day or two later. */
+  togglePaidInHistory: (sessionId: string, playerId: string) => void
   /** Change how players pay, or its amounts. */
   setPricing: (patch: Partial<Pricing>) => void
   moveInQueue: (playerId: string, delta: number) => void
@@ -469,24 +490,10 @@ export const useStore = create<State>()(
             return { ...s, attendees, queue: resting ? dequeue(s.queue, [playerId]) : onCourt ? s.queue : back() }
           }),
 
-        togglePaid: (playerId) =>
-          updateSession((s) => {
-            const due = costSummary(s).dues.find((d) => d.playerId === playerId)
-            const split = pricingOf(s).style === 'split'
-            return {
-              ...s,
-              attendees: s.attendees.map((a) => {
-                if (a.playerId !== playerId || !due) return a
-                // Paid, but owes for games played since: settle up.
-                if (a.paid && due.owing > 0) return { ...a, paidAmount: due.amount }
-                if (a.paid) {
-                  const { paidAmount: _, ...rest } = a
-                  return { ...rest, paid: false }
-                }
-                return { ...a, paid: true, ...(!split && { paidAmount: due.amount }) }
-              }),
-            }
-          }),
+        togglePaid: (playerId) => updateSession((s) => togglePaidIn(s, playerId)),
+
+        togglePaidInHistory: (sessionId, playerId) =>
+          set((st) => ({ history: st.history.map((s) => (s.id === sessionId ? togglePaidIn(s, playerId) : s)) })),
 
         setPricing: (patch) =>
           updateSession((s) => {

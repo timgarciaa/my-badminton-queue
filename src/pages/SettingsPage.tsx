@@ -207,6 +207,7 @@ export function SettingsPage() {
 /** Past sessions, newest first; tap one to see its cost breakdown and who didn't pay. */
 function History({ sessions }: { sessions: Session[] }) {
   const players = usePlayerMap()
+  const togglePaid = useStore((s) => s.togglePaidInHistory)
   const [open, setOpen] = useState<string | null>(null)
   const summaries = sessions.map((s) => ({ s, c: costSummary(s) }))
   const collected = summaries.reduce((n, { c }) => n + c.collected, 0)
@@ -259,9 +260,12 @@ function History({ sessions }: { sessions: Session[] }) {
                 {summaries.map(({ s, c }) => {
                   const paid = c.paidCount
                   const expanded = open === s.id
+                  const nameOf = (id: string) => players.get(id)?.name ?? '?'
+                  const byPlayer = (a: { playerId: string }, b: { playerId: string }) => nameOf(a.playerId).localeCompare(nameOf(b.playerId))
                   const unpaid = c.dues
                     .filter((d) => d.owing > 0 || !s.attendees.find((a) => a.playerId === d.playerId)?.paid)
-                    .map((d) => players.get(d.playerId)?.name ?? '?')
+                    .sort(byPlayer)
+                  const paidUp = c.dues.filter((d) => !unpaid.includes(d)).sort(byPlayer)
                   return [
                     <tr
                       key={s.id}
@@ -313,13 +317,51 @@ function History({ sessions }: { sessions: Session[] }) {
                                 </p>
                               </div>
                             )}
-                            <div className="min-w-0 flex-1">
-                              <p className="text-xs font-semibold text-slate-500 uppercase">
-                                {unpaid.length ? `Not paid (${unpaid.length})` : 'Payments'}
-                              </p>
-                              <p className={unpaid.length ? 'text-rose-700' : 'text-emerald-700'}>
-                                {unpaid.length ? unpaid.join(', ') : 'Everyone paid'}
-                              </p>
+                            <div className="min-w-0 flex-1 space-y-2">
+                              <div>
+                                <p className="text-xs font-semibold text-slate-500 uppercase">
+                                  {unpaid.length ? `Not paid (${unpaid.length})` : 'Payments'}
+                                </p>
+                                {unpaid.length ? (
+                                  <>
+                                    <p className="text-xs text-slate-500">Tap a name once they've paid.</p>
+                                    <ul className="mt-1.5 flex flex-wrap gap-1.5">
+                                      {unpaid.map((d) => (
+                                        <li key={d.playerId}>
+                                          <button
+                                            className="rounded-full bg-rose-50 px-3 py-1.5 font-semibold text-rose-700 ring-1 ring-rose-200 transition hover:bg-rose-100 active:scale-95"
+                                            title={`Mark ${nameOf(d.playerId)} paid`}
+                                            onClick={() => togglePaid(s.id, d.playerId)}
+                                          >
+                                            {nameOf(d.playerId)}
+                                            <span className="ml-1.5 font-normal tabular-nums">{money(d.owing)}</span>
+                                          </button>
+                                        </li>
+                                      ))}
+                                    </ul>
+                                  </>
+                                ) : (
+                                  <p className="text-emerald-700">Everyone paid</p>
+                                )}
+                              </div>
+                              {paidUp.length > 0 && (
+                                <div>
+                                  <p className="text-xs font-semibold text-slate-500 uppercase">Paid ({paidUp.length})</p>
+                                  <ul className="mt-1.5 flex flex-wrap gap-1.5">
+                                    {paidUp.map((d) => (
+                                      <li key={d.playerId}>
+                                        <button
+                                          className="rounded-full bg-emerald-50 px-2.5 py-1 text-sm text-emerald-800 ring-1 ring-emerald-200 transition hover:bg-emerald-100 active:scale-95"
+                                          title={`Mark ${nameOf(d.playerId)} not paid`}
+                                          onClick={() => togglePaid(s.id, d.playerId)}
+                                        >
+                                          ✓ {nameOf(d.playerId)}
+                                        </button>
+                                      </li>
+                                    ))}
+                                  </ul>
+                                </div>
+                              )}
                             </div>
                           </div>
                         </td>

@@ -1,4 +1,4 @@
-import { costSummary, courtBooking, money, sessionStarted, shuttleCount, shuttlesInStock, type ShuttleLine } from '../lib/cost'
+import { byName, costSummary, courtBooking, money, sessionStarted, shuttleCount, shuttlesInStock, type ShuttleLine } from '../lib/cost'
 import { Fragment, useEffect, useState } from 'react'
 import { EmptyState, MoneyField, Stepper } from '../components/ui'
 import { usePlayerMap, useStore } from '../store/useStore'
@@ -360,6 +360,11 @@ function ShuttlesCard({ lines }: { lines: ShuttleLine[] }) {
   const lineOf = (t: ShuttleType) => lines.find((l) => l.id === t.id)
   // Only a type no game has picked can be removed (older untyped games count as the first type).
   const picked = (t: ShuttleType, i: number) => games.some((g) => g.shuttleType === t.id || (i === 0 && !g.shuttleType))
+  // In name order; the one being renamed keeps its place until its name is done.
+  const [editing, setEditing] = useState<{ id: string; name: string } | null>(null)
+  const shown = byName(
+    types.map((t, i) => ({ t, i, name: editing?.id === t.id ? editing.name : t.name })),
+  )
 
   return (
     <div className="d-card d-card-border bg-base-100 shadow-sm space-y-3 p-5">
@@ -372,7 +377,7 @@ function ShuttlesCard({ lines }: { lines: ShuttleLine[] }) {
       {types.length > 1 && (
         <p className="text-sm text-slate-500">New games start with the default. Change a game's shuttle on its court card.</p>
       )}
-      {types.map((t, i) => {
+      {shown.map(({ t, i }) => {
         const line = lineOf(t)
         const fromGames = line?.fromGames ?? 0
         const active = t.id === inUse
@@ -386,8 +391,12 @@ function ShuttlesCard({ lines }: { lines: ShuttleLine[] }) {
                 className="field min-w-0 flex-1 py-2 text-base font-semibold"
                 value={t.name}
                 placeholder="Name, e.g. Vortex"
+                onFocus={() => setEditing({ id: t.id, name: t.name })}
                 onChange={(e) => update(t.id, { name: e.target.value })}
-                onBlur={(e) => !e.target.value.trim() && update(t.id, { name: 'Shuttle' })}
+                onBlur={(e) => {
+                  setEditing(null)
+                  if (!e.target.value.trim()) update(t.id, { name: 'Shuttle' })
+                }}
               />
               {types.length > 1 &&
                 (active ? (

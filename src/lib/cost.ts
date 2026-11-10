@@ -82,13 +82,24 @@ function paidOf(a: Attendee, amount: number, pricing: Pricing): number {
   return pricing.style !== 'split' && a.paidAmount !== undefined ? a.paidAmount : amount
 }
 
-/** Shuttles used and their cost, per shuttle type. Older sessions have one unnamed type. */
+/**
+ * Shuttle types in name order (Dmantis, Dmantis 2, Vortex, XP2), unnamed ones
+ * last. Only for showing them: the first type in the session keeps its meaning.
+ */
+export function byName<T extends { name: string }>(list: T[]): T[] {
+  const blank = (t: T) => (t.name.trim() ? 0 : 1)
+  return [...list].sort(
+    (a, b) => blank(a) - blank(b) || a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }),
+  )
+}
+
+/** Shuttles used and their cost, per shuttle type, in name order. Older sessions have one unnamed type. */
 export function shuttleLines(session: Session): ShuttleLine[] {
   const types = session.shuttleTypes?.length
     ? session.shuttleTypes
     : [{ id: '', name: 'Shuttles', price: session.shuttlePrice, extra: session.extraShuttles }]
   const known = new Set(types.map((t) => t.id))
-  return types.map((t, i) => {
+  const lines = types.map((t, i) => {
     // Games from before types, or of a removed type, count as the first type.
     const fromGames = session.games
       .filter((g) => (g.shuttleType && known.has(g.shuttleType) ? g.shuttleType === t.id : i === 0))
@@ -96,6 +107,7 @@ export function shuttleLines(session: Session): ShuttleLine[] {
     const used = Math.max(0, fromGames + t.extra)
     return { id: t.id, name: t.name, price: t.price, fromGames, used, cost: used * t.price }
   })
+  return byName(lines)
 }
 
 export function shuttlesUsed(session: Session): number {
@@ -158,10 +170,10 @@ export interface ShuttleCount {
   recorded: number
 }
 
-/** Shuttles on hand at the start against what's left, per shuttle type. */
+/** Shuttles on hand at the start against what's left, per shuttle type, in name order. */
 export function shuttleCount(session: Session): ShuttleCount {
   const recorded = new Map(shuttleLines(session).map((l) => [l.id, l.used]))
-  const lines: CountLine[] = (session.shuttleTypes ?? []).map((t) => ({
+  const lines: CountLine[] = byName(session.shuttleTypes ?? []).map((t) => ({
     id: t.id,
     name: t.name,
     start: t.start,
