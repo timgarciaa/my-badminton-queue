@@ -87,7 +87,7 @@ export function StatsPage() {
           seasons={seasons}
         />
       </div>
-      <SeasonBar scope={scope} range={range} onRange={setRange} season={season} onScope={setScope} />
+      <SeasonBar scope={scope} range={range} onRange={setRange} season={season} sessions={sessions} onScope={setScope} />
 
       {games.length === 0 ? (
         <div className="space-y-5 px-5 pb-5">
