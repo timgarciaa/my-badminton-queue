@@ -107,6 +107,20 @@ export function scoreLeader(score?: [number, number]): 'A' | 'B' | undefined {
   return score[0] > score[1] ? 'A' : 'B'
 }
 
+/**
+ * A score a badminton game ends on: 21 or more with a 2-point lead, or 30
+ * (e.g. 21–15, 22–20, 30–29), so it can't have stopped out of hours.
+ */
+export function isFinishedScore(score?: [number, number]): boolean {
+  if (!score) return false
+  const hi = Math.max(...score)
+  const gap = Math.abs(score[0] - score[1])
+  return hi <= 30 && gap > 0 && ((hi >= 21 && gap >= 2) || hi === 30)
+}
+
+/** A finished game with a final score but no winner picked (e.g. ended out of hours by mistake). */
+export const missingWinner = (g: Game) => !!g.endedAt && !g.winner && isFinishedScore(g.score)
+
 /** Both teams' points as typed, or undefined until both are filled in. */
 export function parseScore(points: [string, string]): [number, number] | undefined {
   if (points.some((p) => p === '')) return undefined

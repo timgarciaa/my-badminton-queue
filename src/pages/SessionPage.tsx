@@ -7,7 +7,7 @@ import { clock, dayLabel, sameDay, upcoming } from '../lib/schedule'
 import { PointsInput } from '../components/Score'
 import { SetGameDialog } from '../components/SetGameDialog'
 import { PlayerTags, Stepper, elapsed, useNow } from '../components/ui'
-import { gameNumber, helpFrom, parseScore, playedGames, scoreLeader, sessionsWithin } from '../lib/stats'
+import { gameNumber, helpFrom, isFinishedScore, parseScore, playedGames, scoreLeader, sessionsWithin } from '../lib/stats'
 import { isHelpStruggling, isSkillMatch, isWinnersStay, isWinnersTogether, usePlayerMap, useStore } from '../store/useStore'
 import type { Game, GameSwap, Pair, Player, Session } from '../types'
 
@@ -206,15 +206,21 @@ function CourtCard({
   const shuttleTypes = session.shuttleTypes
   const setGameShuttleType = useStore((s) => s.setGameShuttleType)
   const [askWinner, setAskWinner] = useState(false)
-  // Points typed while ending the game (optional).
+  // Points typed while ending the game (optional), and the team tapped as the winner.
   const [points, setPoints] = useState<[string, string]>(['', ''])
+  const [picked, setPicked] = useState<'A' | 'B'>()
   const score = parseScore(points)
   const lead = scoreLeader(score)
+  // The higher score wins; without points, the team tapped. A tie has no winner.
+  const winner = score ? lead : picked
+  const final = isFinishedScore(score)
   const skillOf = (id: string) => players.get(id)?.skill ?? 3
   const teamName = (t: Pair) => t.map((id) => players.get(id)?.name ?? '?').join(' & ')
 
   const finish = (winner?: 'A' | 'B', outOfHours = false) => {
     setAskWinner(false)
+    setPicked(undefined)
+    setPoints(['', ''])
     if (!game) return
     const s = useStore.getState().session
     // Out of hours keeps any score; otherwise a score goes with its winner.
@@ -334,47 +340,87 @@ function CourtCard({
         {askWinner ? (
           <>
             <p className="text-center text-sm font-bold text-slate-500">Who won?</p>
-            {winnersStay && (
+            {(['A', 'B'] as const).map((side, i) => {
+              const name = teamName(side === 'A' ? game.teamA : game.teamB)
+              const won = winner === side
+              // With points typed, the score decides; tapping the other team does nothing.
+              const locked = !!score && lead !== side
+              return (
+                <div
+                  key={side}
+                  role="button"
+                  tabIndex={0}
+                  aria-pressed={won}
+                  aria-label={`${name} won`}
+                  onClick={() => !score && setPicked(won ? undefined : side)}
+                  onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && !score && setPicked(won ? undefined : side)}
+                  className={`flex cursor-pointer items-center gap-2 rounded-xl border-2 py-1.5 pr-1.5 pl-3 transition active:scale-[0.98] ${
+                    won ? 'border-emerald-500 bg-emerald-50' : locked ? 'border-slate-200 bg-white opacity-60' : 'border-slate-200 bg-white'
+                  }`}
+                >
+                  <span className="min-w-0 flex-1 truncate font-semibold">{name}</span>
+                  {won && <span className="d-badge d-badge-success d-badge-sm shrink-0 font-bold">WIN</span>}
+                  {/* Typing points doesn't pick the team by tapping. */}
+                  <span onClick={(e) => e.stopPropagation()}>
+                    <PointsInput
+                      className="h-10"
+                      label={`Points for ${name} (optional)`}
+                      value={points[i]}
+                      onChange={(v) => setPoints((p) => (i === 0 ? [v, p[1]] : [p[0], v]))}
+                    />
+                  </span>
+                </div>
+              )
+            })}
+            <p className="text-center text-xs text-slate-500">
+              {score && !lead
+                ? 'Tied: no winner yet'
+                : score
+                  ? 'The higher score wins'
+                  : 'Tap the team that won. Points are optional; double-tap a box for 21.'}
+            </p>
+            <button className="d-btn d-btn-primary w-full" disabled={!winner} onClick={() => finish(winner)}>
+              {winner ? (
+                <span className="truncate">
+                  {teamName(winner === 'A' ? game.teamA : game.teamB)} won
+                  {score && ` ${Math.max(...score)}–${Math.min(...score)}`}
+                </span>
+              ) : (
+                'Pick the winner'
+              )}
+            </button>
+            {winnersStay && winner && (
               <p className="-mt-1 text-center text-xs text-slate-500">
                 {together ? 'Winners stay on together' : 'Winners stay on and split up'}; losers go to the queue.
               </p>
             )}
-            {(['A', 'B'] as const).map((side, i) => (
-              <div key={side} className="flex gap-2">
-                <button
-                  className="d-btn d-btn-primary min-w-0 flex-1"
-                  // A score picks the winner; it can't say the other team won.
-                  disabled={!!score && lead !== side}
-                  onClick={() => finish(side)}
-                >
-                  <span className="truncate">{teamName(side === 'A' ? game.teamA : game.teamB)}</span>
-                </button>
-                <PointsInput
-                  className="h-10"
-                  label={`Points for ${teamName(side === 'A' ? game.teamA : game.teamB)} (optional)`}
-                  value={points[i]}
-                  onChange={(v) => setPoints((p) => (i === 0 ? [v, p[1]] : [p[0], v]))}
-                />
-              </div>
-            ))}
-            <p className="-mt-1 text-center text-xs text-slate-400">
-              {score && !lead ? 'Tied: no winner yet' : 'Points are optional'}
-            </p>
-            <div className="grid grid-cols-2 gap-2">
-              <button className="d-btn" disabled={!!lead} onClick={() => finish()}>
+            <div className="grid grid-cols-3 gap-1.5">
+              <button
+                className="d-btn d-btn-sm d-btn-ghost"
+                onClick={() => {
+                  setAskWinner(false)
+                  setPicked(undefined)
+                }}
+              >
+                Back
+              </button>
+              <button className="d-btn d-btn-sm" disabled={!!winner} onClick={() => finish()}>
                 No result
               </button>
               <button
-                className={`d-btn ${timeUp ? 'd-btn-warning' : ''}`}
+                className={`d-btn d-btn-sm ${timeUp && !final ? 'd-btn-warning' : ''}`}
+                // A final score (21–15) means the game finished: save it with its winner instead.
+                disabled={final}
                 onClick={() => finish(undefined, true)}
-                title="The game didn't finish because the court time ran out"
+                title={
+                  final
+                    ? `${Math.max(...score!)}–${Math.min(...score!)} is a finished game`
+                    : "The game didn't finish because the court time ran out"
+                }
               >
                 Out of hours
               </button>
             </div>
-            <button className="d-btn d-btn-ghost d-btn-sm w-full" onClick={() => setAskWinner(false)}>
-              Back
-            </button>
           </>
         ) : (
           <>

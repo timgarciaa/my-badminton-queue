@@ -15,6 +15,7 @@ export function NumberField({
   label,
   placeholder = '–',
   className = '',
+  quick,
 }: {
   value: string
   onChange: (v: string) => void
@@ -23,6 +24,8 @@ export function NumberField({
   label: string
   placeholder?: string
   className?: string
+  /** Double-tapping the box fills in this value, e.g. "21", without the pad. */
+  quick?: string
 }) {
   const field = useRef<HTMLButtonElement>(null)
   const pad = useRef<HTMLDivElement>(null)
@@ -43,7 +46,23 @@ export function NumberField({
     fresh.current = true
     pad.current?.showPopover()
   }
-  const close = () => pad.current?.hidePopover()
+  const close = () => {
+    if (pad.current?.matches(':popover-open')) pad.current.hidePopover()
+  }
+  // iPad Safari doesn't reliably fire dblclick, so time the taps: the second
+  // one within 350 ms fills in the quick value (and closes the pad it opened).
+  const lastTap = useRef(0)
+  const tap = () => {
+    const now = Date.now()
+    if (quick && now - lastTap.current < 350) {
+      lastTap.current = 0
+      onChange(quick)
+      close()
+    } else {
+      lastTap.current = now
+      show()
+    }
+  }
 
   const press = (key: (typeof KEYS)[number]) => {
     if (key === 'done') return close()
@@ -71,13 +90,13 @@ export function NumberField({
       <button
         ref={field}
         type="button"
-        className={`field flex items-center justify-center tabular-nums ${open ? 'ring-2 ring-teal-600' : ''} ${
+        className={`field flex touch-manipulation items-center justify-center tabular-nums ${open ? 'ring-2 ring-teal-600' : ''} ${
           value ? '' : 'text-slate-400'
         } ${className}`}
         aria-label={value ? `${label}: ${value}` : label}
         aria-haspopup="dialog"
         aria-expanded={open}
-        onClick={show}
+        onClick={tap}
       >
         {value || placeholder}
       </button>

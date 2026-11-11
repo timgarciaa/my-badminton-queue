@@ -1934,3 +1934,43 @@ describe('awards', async () => {
     expect(keys).toHaveLength(14)
   })
 })
+
+describe('ending a game with a score', async () => {
+  const { isFinishedScore, missingWinner } = await import('./stats')
+  const g = (id: string, extra: Partial<Session['games'][number]>) =>
+    ({ id, court: 1, teamA: ['a', 'b'], teamB: ['c', 'd'], startedAt: 0, endedAt: 600_000, shuttles: 1, ...extra }) as Session['games'][number]
+
+  it('knows a finished badminton score from one that stopped part way', () => {
+    for (const s of [[21, 15], [15, 21], [22, 20], [30, 29], [29, 27], [21, 0]] as [number, number][]) expect(isFinishedScore(s)).toBe(true)
+    for (const s of [[15, 12], [21, 20], [20, 20], [21, 21], [31, 29], [0, 0]] as [number, number][]) expect(isFinishedScore(s)).toBe(false)
+    expect(isFinishedScore(undefined)).toBe(false)
+  })
+
+  it('finds games with a final score but no winner, not ones stopped part way', () => {
+    expect(missingWinner(g('1', { score: [21, 15], outOfHours: true }))).toBe(true)
+    expect(missingWinner(g('2', { score: [21, 15] }))).toBe(true)
+    expect(missingWinner(g('3', { score: [15, 12], outOfHours: true }))).toBe(false)
+    expect(missingWinner(g('4', { score: [21, 15], winner: 'A' }))).toBe(false)
+  })
+
+  it('gives the win to the higher score, in this session and past ones', () => {
+    const now: Session = { ...newSession(), games: [g('now', { score: [18, 21], outOfHours: true }), g('stopped', { score: [15, 12], outOfHours: true })] }
+    const past: Session = { ...newSession(), id: 'past', games: [g('past', { score: [21, 19] })] }
+    useStore.setState({ session: now, history: [past] })
+    expect(useStore.getState().fixMissingWinners(['now', 'stopped', 'past'])).toBe(2)
+    const st = useStore.getState()
+    expect(st.session.games[0]).toMatchObject({ winner: 'B', score: [18, 21], outOfHours: undefined })
+    // Stopped part way out of hours: left as it is.
+    expect(st.session.games[1]).toMatchObject({ outOfHours: true, score: [15, 12] })
+    expect(st.session.games[1].winner).toBeUndefined()
+    expect(st.history[0].games[0].winner).toBe('A')
+  })
+
+  it('a final score typed on an out-of-hours game gives it its winner', () => {
+    useStore.setState({ session: { ...newSession(), games: [g('x', { outOfHours: true })] }, history: [] })
+    useStore.getState().setScore('x', [12, 10])
+    expect(useStore.getState().session.games[0]).toMatchObject({ outOfHours: true, score: [12, 10] })
+    useStore.getState().setScore('x', [21, 17])
+    expect(useStore.getState().session.games[0]).toMatchObject({ winner: 'A', outOfHours: undefined })
+  })
+})

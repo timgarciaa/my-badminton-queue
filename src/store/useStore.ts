@@ -4,7 +4,7 @@ import { persist } from 'zustand/middleware'
 import { costSummary, courtBooking, courtFeeOf, gameShuttleType, pricingOf, sessionStarted, shuttlesInStock } from '../lib/cost'
 import { heldIds, isSetReady, setIds } from '../lib/plan'
 import { applySwap, dequeue, enqueue, move, placeByArrival, pushFront, swap } from '../lib/queue'
-import { scoreLeader } from '../lib/stats'
+import { isFinishedScore, missingWinner, scoreLeader } from '../lib/stats'
 import { clash } from '../lib/schedule'
 import type { Attendee, CourtBooking, Game, GameSwap, Gender, Pair, Player, Pricing, ScheduledGame, Season, Session, SetGame, ShuttleType, Skill } from '../types'
 
@@ -358,6 +358,8 @@ interface State {
    * hours, where the score is where it stood.
    */
   setScore: (gameId: string, score?: [number, number]) => void
+  /** Give the win to the higher score in games with a final score but no winner (see missingWinner); returns how many. */
+  fixMissingWinners: (gameIds: string[]) => number
   cancelGame: (gameId: string) => void
 
   closeSession: () => void
@@ -770,7 +772,8 @@ export const useStore = create<State>()(
           set((st) => {
             const scored = (g: Game): Game => {
               if (!score) return { ...g, score: undefined }
-              if (g.outOfHours && !g.winner) return { ...g, score }
+              // Out of hours keeps a score where play stopped; a final score has its winner.
+              if (g.outOfHours && !g.winner && !isFinishedScore(score)) return { ...g, score }
               const winner = scoreLeader(score)
               return { ...g, score, winner, outOfHours: winner ? undefined : g.outOfHours }
             }
@@ -780,6 +783,24 @@ export const useStore = create<State>()(
                 : s
             return { session: fix(st.session), history: st.history.map(fix) }
           }),
+
+        fixMissingWinners: (gameIds) => {
+          const ids = new Set(gameIds)
+          let fixed = 0
+          const fix = (s: Session): Session =>
+            s.games.some((g) => ids.has(g.id) && missingWinner(g))
+              ? {
+                  ...s,
+                  games: s.games.map((g) => {
+                    if (!ids.has(g.id) || !missingWinner(g)) return g
+                    fixed++
+                    return { ...g, winner: scoreLeader(g.score), outOfHours: undefined }
+                  }),
+                }
+              : s
+          set((st) => ({ session: fix(st.session), history: st.history.map(fix) }))
+          return fixed
+        },
 
         cancelGame: (gameId) =>
           updateSession((s) => {

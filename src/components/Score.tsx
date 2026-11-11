@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { parseScore, scoreLeader } from '../lib/stats'
+import { isFinishedScore, parseScore, scoreLeader } from '../lib/stats'
 import { NumberField } from './NumberPad'
 import { useStore } from '../store/useStore'
 import type { Game } from '../types'
@@ -20,6 +20,7 @@ export function PointsInput({
     <NumberField
       className={`w-16 px-1 text-xl font-bold ${className}`}
       maxLength={2}
+      quick="21"
       label={label}
       value={value}
       onChange={onChange}
@@ -45,7 +46,8 @@ export function ScoreDialog({
   )
   const score = parseScore(points)
   const lead = scoreLeader(score)
-  const stopped = game.outOfHours && !game.winner
+  // Out of hours, unless the new score is a finished game: then it has its winner.
+  const stopped = game.outOfHours && !game.winner && !isFinishedScore(score)
   const save = (s?: [number, number]) => {
     setScore(game.id, s)
     onClose()

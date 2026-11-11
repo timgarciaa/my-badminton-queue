@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { ScoreDialog } from '../components/Score'
 import { Standings } from '../components/Standings'
-import { finishedGames, longDate } from '../lib/stats'
+import { finishedGames, longDate, missingWinner, scoreLeader } from '../lib/stats'
 import { EmptyState } from '../components/ui'
 import { usePlayerMap, useStore } from '../store/useStore'
 import type { Game, GameSwap, Pair, Player } from '../types'
@@ -27,9 +27,11 @@ export function GamesPage() {
   const [focus, setFocus] = useState<string | null>(null)
 
   const games = finishedGames(scope === 'today' ? [session] : [session, ...history])
-  // Games still missing a winner; out-of-hours games have their result.
-  const pending = (g: Game) => !g.winner && !g.outOfHours
+  const fixMissing = useStore((s) => s.fixMissingWinners)
+  // Games still missing a winner: out-of-hours games have their result, unless the score shows it finished.
+  const pending = (g: Game) => !g.winner && (!g.outOfHours || missingWinner(g))
   const noResult = games.filter(pending).length
+  const missing = games.filter(missingWinner)
   const shown = games
     .filter((g) => show === 'all' || pending(g))
     .filter((g) => !focus || [...g.teamA, ...g.teamB].includes(focus))
@@ -76,6 +78,19 @@ export function GamesPage() {
             </button>
           )}
         </div>
+        {missing.length > 0 && (
+          <div role="alert" className="mx-4 mt-3 flex flex-wrap items-center gap-3 rounded-xl bg-amber-50 px-4 py-2.5 text-amber-900 ring-1 ring-amber-200">
+            <span className="min-w-0 flex-1 text-sm">
+              <strong>
+                {missing.length} {missing.length === 1 ? 'game has' : 'games have'} a final score but no winner.
+              </strong>{' '}
+              The higher score should have won.
+            </span>
+            <button className="d-btn d-btn-sm d-btn-warning" onClick={() => fixMissing(missing.map((g) => g.id))}>
+              Give {missing.length === 1 ? 'it' : 'them'} the win
+            </button>
+          </div>
+        )}
         <p className="px-4 pt-3 text-xs text-slate-500">Tap a team to set or clear the winner. Tap between the teams to add a score (optional).</p>
 
         <div className="min-h-0 flex-1 overflow-y-auto p-4 pt-2">
@@ -126,6 +141,8 @@ function GameRow({
 }) {
   const setWinner = useStore((s) => s.setWinner)
   const setOutOfHours = useStore((s) => s.setOutOfHours)
+  const missing = missingWinner(game)
+  const leader = scoreLeader(game.score)
   const [scoring, setScoring] = useState(false)
   const shuttleTypes = useStore((s) => s.session.shuttleTypes)
   const mins = Math.round(((game.endedAt ?? game.startedAt) - game.startedAt) / 60_000)
@@ -163,7 +180,7 @@ function GameRow({
   return (
     <li
       className={`d-card d-card-border bg-base-100 px-3 py-2.5 ${
-        game.winner ? '' : game.outOfHours ? 'border-l-4 border-l-slate-300' : 'border-l-4 border-l-amber-400'
+        game.winner ? '' : game.outOfHours && !missing ? 'border-l-4 border-l-slate-300' : 'border-l-4 border-l-amber-400'
       }`}
     >
       <div className="flex items-center gap-3">
@@ -198,13 +215,23 @@ function GameRow({
       </div>
       {(game.swap || game.set || !game.winner) && (
         <p className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 pl-31 text-xs">
-          {!game.winner &&
+          {missing && leader && (
+            <>
+              <span className="font-semibold text-amber-700">
+                {game.score![0]}–{game.score![1]} but no winner
+              </span>
+              <button className="d-btn d-btn-sm d-btn-warning d-btn-soft" onClick={() => setWinner(game.id, leader)}>
+                {(leader === 'A' ? game.teamA : game.teamB).map(name).join(' & ')} won
+              </button>
+            </>
+          )}
+          {!game.winner && !missing &&
             (game.outOfHours ? (
               <span className="font-semibold text-slate-500">Out of hours · no winner</span>
             ) : (
               <span className="font-semibold text-amber-700">No result yet</span>
             ))}
-          {!game.winner && (
+          {!game.winner && !missing && (
             <button
               className={`d-btn d-btn-sm ${game.outOfHours ? 'd-btn-ghost text-slate-500' : 'd-btn-warning d-btn-soft'}`}
               onClick={() => setOutOfHours(game.id, !game.outOfHours)}
