@@ -201,6 +201,7 @@ describe('public stats page', () => {
       session: JSON.stringify(session('now', '2026-10-30', { status: 'open', remote: { code: 'ABC234', key: 'secret-key', pin: '4820', handled: [] } })),
       'h#old': JSON.stringify(session('old', '2026-10-25')),
       'h#older': JSON.stringify(session('older', '2026-10-18')),
+      seasons: JSON.stringify([{ id: 's1', name: 'Season 1', from: '2026-09-01', to: '2026-11-30' }]),
     }
     return call('POST', '/club/save', token, { baseRev: 0, put, remove: [] })
   }
@@ -237,6 +238,7 @@ describe('public stats page', () => {
     expect(res.body.club).toEqual({ name: 'Serve N Shout' })
     expect(res.body.players).toEqual([{ id: 'p1', name: 'Tim' }, { id: 'p2', name: 'Ana' }])
     expect(res.body.history.map((s) => s.date)).toEqual(['2026-10-25', '2026-10-18'])
+    expect(res.body.seasons).toEqual([{ id: 's1', name: 'Season 1', from: '2026-09-01', to: '2026-11-30' }])
     expect(res.body.session).toEqual({
       id: 'now',
       date: '2026-10-30',

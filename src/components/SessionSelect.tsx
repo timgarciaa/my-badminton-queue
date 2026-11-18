@@ -14,6 +14,7 @@ export function SessionSelect({
   all,
   recent,
   seasons,
+  pickDates = true,
   current = 'Today (current)',
   className = '',
 }: {
@@ -25,6 +26,8 @@ export function SessionSelect({
   recent: Session[]
   /** Saved seasons (by name; their dates show under the picker), and a "Pick dates" option; left out where dates can't be picked. */
   seasons?: Season[]
+  /** Offer "Pick dates…" with the seasons; off where dates can't be picked (the public page). */
+  pickDates?: boolean
   /** The open session's name; leave it out when null. */
   current?: string | null
   className?: string
@@ -40,7 +43,7 @@ export function SessionSelect({
       <option value="3m">Last 3 months · {played(recent)} sessions</option>
       {seasons && (
         <>
-          <option value="range">Pick dates…</option>
+          {pickDates && <option value="range">Pick dates…</option>}
           {seasons.length > 0 && (
             <optgroup label="Seasons">
               {[...seasons].sort((a, b) => b.from.localeCompare(a.from)).map((x) => (

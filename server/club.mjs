@@ -106,7 +106,7 @@ export function createClubApi(db, accounts, verify, now = () => Date.now()) {
     throw new Error('no free link name')
   }
 
-  /** What a club's public page shows: names, games and check-in times; no money, payments or PINs. */
+  /** What a club's public page shows: names, games, check-in times and seasons; no money, payments or PINs. */
   async function publicStats(slug) {
     const id = SLUG.test(slug) ? await db.clubBySlug(slug) : null
     const club = id && (await db.club(id))
@@ -144,7 +144,10 @@ export function createClubApi(db, accounts, verify, now = () => Date.now()) {
       .map((d) => session(parse(docs[d])))
       .filter(Boolean)
       .sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0))
-    return json(200, { club: { name: club.name }, players, session: session(parse(docs.session)) ?? null, history })
+    const seasons = (parse(docs.seasons) ?? [])
+      .filter((x) => x && x.id && x.from && x.to)
+      .map((x) => ({ id: x.id, name: x.name, from: x.from, to: x.to }))
+    return json(200, { club: { name: club.name }, players, session: session(parse(docs.session)) ?? null, history, seasons })
   }
 
   async function signup(body) {

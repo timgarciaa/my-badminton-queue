@@ -4,7 +4,7 @@ import { SessionSelect } from '../components/SessionSelect'
 import { EmptyState } from '../components/ui'
 import { fetchPublicStats, findPlayer, type PublicStats } from '../lib/publicStats'
 import { Roster } from '../lib/roster'
-import { useScope } from '../lib/scope'
+import { rangeLabel, useScope } from '../lib/scope'
 import { newSession } from '../store/useStore'
 
 type Load = { state: 'loading' } | { state: 'missing' } | { state: 'failed' } | { state: 'ready'; data: PublicStats }
@@ -74,7 +74,7 @@ function Stats({ data, player }: { data: PublicStats; player?: string }) {
   const players = useMemo(() => new Map(data.players.map((p) => [p.id, p])), [data.players])
   const empty = useMemo(() => newSession(), [])
   const session = data.session ?? empty
-  const { scope, setScope, all, recent, sessions, span, label } = useScope(session, data.history)
+  const { scope, setScope, season, all, recent, sessions, span, label } = useScope(session, data.history, data.seasons)
   const wanted = useMemo(() => (player ? findPlayer(data.players, player) : undefined), [data.players, player])
   const [chosen, setChosen] = useState<string | null>(wanted?.id ?? null)
 
@@ -93,8 +93,11 @@ function Stats({ data, player }: { data: PublicStats; player?: string }) {
             history={data.history}
             all={all}
             recent={recent}
+            seasons={data.seasons}
+            pickDates={false}
             current={session.games.length ? 'Current session' : null}
           />
+          {season && <p className="text-sm text-slate-500">{rangeLabel(season)}</p>}
         </div>
         <PlayerStats sessions={sessions} scope={label} showDate={span} chosen={chosen} onChoose={setChosen} />
       </div>

@@ -1,5 +1,5 @@
 import { newSession } from '../store/useStore'
-import type { Game, Session } from '../types'
+import type { Game, Season, Session } from '../types'
 import { CHECKIN_API } from './remoteCheckin'
 import type { PublicPlayer } from './roster'
 
@@ -17,6 +17,8 @@ export interface PublicStats {
   players: PublicPlayer[]
   session: Session | null
   history: Session[]
+  /** The club's saved seasons, e.g. Season 1 = Sep 1 – Nov 30. */
+  seasons: Season[]
 }
 
 const SLUG = /^[a-z0-9][a-z0-9-]{1,28}[a-z0-9]$/
@@ -68,11 +70,13 @@ export async function fetchPublicStats(slug: string): Promise<PublicStats | null
   const res = await fetch(`${CHECKIN_API}/public/${encodeURIComponent(slug)}`)
   if (res.status === 404) return null
   if (!res.ok) throw new Error(`public stats: ${res.status}`)
-  const data = (await res.json()) as { club: { name: string }; players: PublicPlayer[]; session: PublicSession | null; history: PublicSession[] }
+  const data = (await res.json()) as { club: { name: string }; players: PublicPlayer[]; session: PublicSession | null; history: PublicSession[]; seasons?: Season[] }
   return {
     club: data.club,
     players: data.players,
     session: data.session && toSession(data.session),
     history: data.history.map(toSession),
+    // An older server sends none.
+    seasons: data.seasons ?? [],
   }
 }
