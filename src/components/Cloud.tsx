@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import {
+  clashLabel,
   CLOUD,
   type ClubSnapshot,
   decideMember,
@@ -60,11 +61,13 @@ export function CloudStatus({ onOpen }: { onOpen: () => void }) {
 export function CloudBanner() {
   const club = useCloud((s) => s.club)
   const status = useSyncStatus((s) => s.status)
+  const clashes = useSyncStatus((s) => s.clashes)
   const [busy, setBusy] = useState(false)
   if (!CLOUD || !club || status !== 'conflict') return null
 
   const resolve = async (keep: 'club' | 'device') => {
-    if (keep === 'device' && !confirm(`Replace ${club.name}'s data in the cloud with this iPad's?`)) return
+    const lose = keep === 'device' ? `${club.name}'s data in the cloud` : "this iPad's changes"
+    if (!confirm(`Replace ${lose}? A copy is kept in Settings → Backup in case you need it back.`)) return
     setBusy(true)
     try {
       const snap = await fetchClub()
@@ -81,13 +84,14 @@ export function CloudBanner() {
     <div role="alert" className="flex items-center gap-3 border-b border-amber-200 bg-amber-50 px-6 py-2.5 text-amber-900">
       <CloudIcon className="h-5 w-5 shrink-0" />
       <span className="flex-1">
-        <strong>{club.name}</strong> was changed on another device, so this iPad&apos;s changes aren&apos;t saved.
+        Another device also changed {clashLabel(clashes ?? [])} in <strong>{club.name}</strong>. Pick which to keep;
+        this iPad keeps working meanwhile.
       </span>
-      <button className="d-btn d-btn-sm" disabled={busy} onClick={() => resolve('club')}>
-        Use the club&apos;s data
-      </button>
       <button className="d-btn d-btn-sm d-btn-warning" disabled={busy} onClick={() => resolve('device')}>
         Keep this iPad&apos;s
+      </button>
+      <button className="d-btn d-btn-sm" disabled={busy} onClick={() => resolve('club')}>
+        Use the other device&apos;s
       </button>
     </div>
   )

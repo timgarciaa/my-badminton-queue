@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, describe, expect, it, vi } from 'vitest'
 import type { Session } from '../types'
 import { bumpedPlayers, fairShare, meetCounts, metPairs, pairKey, partnerCounts, playStreaks, splitTeams, suggestSwap } from './balance'
 import { byName, costSummary, courtBooking, money, sessionStarted, shuttleCount, shuttleLines, shuttlesInStock } from './cost'
@@ -1478,6 +1478,90 @@ describe('signing in on another device', async () => {
     useStore.setState({ ...local, players: [] })
     expect(choose(snap(players, 3), { rev: 0 })).toBe('download')
     useCloud.setState({ lastClubId: undefined })
+  })
+})
+
+describe('syncing after the internet drops', async () => {
+  const { forgetReplacedCopy, hashOf, keepThisDevice, merge, replacedCopy, restoreReplacedCopy, takeClubData, toDocs, useCloud } = await import('./cloud')
+  const hashes = (d: Record<string, string>) => Object.fromEntries(Object.entries(d).map(([k, v]) => [k, hashOf(v)]))
+  // Tests run without a browser: a stand-in for the iPad's storage.
+  const kept = new Map<string, string>()
+  vi.stubGlobal('localStorage', {
+    getItem: (k: string) => kept.get(k) ?? null,
+    setItem: (k: string, v: string) => void kept.set(k, v),
+    removeItem: (k: string) => void kept.delete(k),
+  })
+  afterAll(() => vi.unstubAllGlobals())
+  const base = { players: '["a"]', session: '{"games":1}', 'h#s1': '{"old":1}' }
+
+  it("treats this device's own save as in sync when its reply was lost", () => {
+    // The save reached the club (rev went up) but the iPad never heard back.
+    const local = { ...base, session: '{"games":2}' }
+    const m = merge(local, hashes(base), local)
+    expect(m).toEqual({ docs: local, clashes: [], took: false })
+  })
+
+  it('recognises its own save that got there without a reply, even after more changes here', async () => {
+    const { baseOf, useCloud } = await import('./cloud')
+    // Saved game 1; sent game 2 and the reply was lost; then game 3 was entered here.
+    const sentDoc = '{"games":2}'
+    useCloud.setState({ saved: hashes(base), sent: { session: [hashOf(sentDoc)], 'h#s1': [''] } })
+    const { 'h#s1': _gone, ...server } = { ...base, session: sentDoc }
+    const local = { ...server, session: '{"games":3}' }
+    expect(merge(local, hashes(base), server).clashes).toEqual(['session'])
+    expect(merge(local, baseOf(server), server)).toEqual({ docs: local, clashes: [], took: false })
+    // A save that never arrived changes nothing.
+    expect(baseOf(base)).toEqual(hashes(base))
+    useCloud.setState({ saved: {}, sent: {} })
+  })
+
+  it("keeps this device's changes and takes the other device's, document by document", () => {
+    const local = { ...base, session: '{"games":5}' }
+    const server = { ...base, players: '["a","b"]', seasons: '[1]' }
+    const m = merge(local, hashes(base), server)
+    expect(m.clashes).toEqual([])
+    expect(m.took).toBe(true)
+    expect(m.docs).toEqual({ players: '["a","b"]', session: '{"games":5}', 'h#s1': '{"old":1}', seasons: '[1]' })
+  })
+
+  it('follows removals on either side', () => {
+    const { 'h#s1': _gone, ...rest } = base
+    expect(merge(rest, hashes(base), base).docs).toEqual(rest)
+    expect(merge(base, hashes(base), rest)).toEqual({ docs: rest, clashes: [], took: true })
+  })
+
+  it('only asks when both changed the same document differently', () => {
+    const m = merge({ ...base, session: '{"games":5}' }, hashes(base), { ...base, session: '{"games":3}', players: '[]' })
+    expect(m.clashes).toEqual(['session'])
+  })
+
+  const players = [{ id: 'a', name: 'Ana', skill: 3 as const, active: true, createdAt: 0 }]
+  const mine = { players, session: { ...newSession(), id: 'mine' }, history: [], schedule: [], seasons: [] }
+  const theirs = { ...mine, session: { ...newSession(), id: 'theirs' } }
+  const snap = { club: { id: 'c1', name: 'Club' }, user: 'u', rev: 9, docs: toDocs(theirs) }
+
+  it("keeps a copy of this iPad's unsaved data when the club's replaces it, to restore", () => {
+    forgetReplacedCopy()
+    useStore.setState(mine)
+    useCloud.setState({ saved: {} })
+    takeClubData(snap)
+    expect(useStore.getState().session.id).toBe('theirs')
+    expect(replacedCopy()).toMatchObject({ from: 'device', data: { session: { id: 'mine' } } })
+    // Restoring swaps them: the club's data becomes the copy.
+    restoreReplacedCopy()
+    expect(useStore.getState().session.id).toBe('mine')
+    expect(replacedCopy()).toMatchObject({ from: 'device', data: { session: { id: 'theirs' } } })
+  })
+
+  it("keeps a copy of the club's data when this iPad's replaces it", () => {
+    forgetReplacedCopy()
+    useStore.setState(mine)
+    keepThisDevice(snap)
+    expect(replacedCopy()).toMatchObject({ from: 'club', data: { session: { id: 'theirs' } } })
+    // Nothing is kept when the two were the same.
+    forgetReplacedCopy()
+    keepThisDevice({ ...snap, docs: toDocs(mine) })
+    expect(replacedCopy()).toBeUndefined()
   })
 })
 

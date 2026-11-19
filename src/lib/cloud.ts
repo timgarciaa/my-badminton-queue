@@ -45,6 +45,12 @@ interface CloudState {
   rev: number
   /** Hash of each document as last saved or downloaded, so only changes are sent. */
   saved: Record<string, string>
+  /**
+   * Hashes of documents sent in saves not known to have arrived ('' for a
+   * removal): a save can reach the club after the internet drops, before its
+   * reply gets back. Then the club's copy is this device's own, not a change.
+   */
+  sent?: Record<string, string[]>
   /** The club this device's data last went to; kept after signing out. */
   lastClubId?: string
   /** Who was signed in when the server signed them out, to fill in on the sign-in page. */
@@ -59,7 +65,7 @@ export const useCloud = create<CloudState>()(persist(() => ({ rev: 0, saved: {} 
  * back to the sign-in page, see signInAgain.)
  */
 export type SyncStatus = 'saved' | 'saving' | 'offline' | 'conflict'
-export const useSyncStatus = create<{ status: SyncStatus; savedAt?: number; waiting: number }>(() => ({
+export const useSyncStatus = create<{ status: SyncStatus; savedAt?: number; waiting: number; clashes?: string[] }>(() => ({
   status: 'saved',
   /** People asking to join the club, for its organizers to approve. */
   waiting: 0,
@@ -210,6 +216,67 @@ export function changes(docs: Record<string, string>, saved: Record<string, stri
   return batches
 }
 
+/**
+ * A three-way merge, document by document: `base` is what this device last
+ * knew the club had (hashes), `local` this device's documents and `server` the
+ * club's. A document only one side changed takes that side; one both changed
+ * the same way (e.g. this device's own save whose reply was lost) is already
+ * in sync; one both changed differently is a clash, for the organizer to pick.
+ */
+export function merge(local: Record<string, string>, base: Record<string, string>, server: Record<string, string>) {
+  const docs: Record<string, string> = {}
+  const clashes: string[] = []
+  let took = false
+  for (const id of new Set([...Object.keys(local), ...Object.keys(base), ...Object.keys(server)])) {
+    const l = id in local ? hashOf(local[id]) : undefined
+    const s = id in server ? hashOf(server[id]) : undefined
+    const b = base[id]
+    if (l === s || s === b) {
+      if (id in local) docs[id] = local[id]
+    } else if (l === b) {
+      took = true
+      if (id in server) docs[id] = server[id]
+    } else {
+      clashes.push(id)
+      if (id in local) docs[id] = local[id]
+    }
+  }
+  return { docs, clashes, took }
+}
+
+/**
+ * The club changed since this device last saw it: take the other devices'
+ * changes and keep this device's, without asking unless both changed the same
+ * thing. Returns false for a clash (the organizer picks, see CloudBanner).
+ */
+function reconcile(snap: ClubSnapshot): boolean {
+  const { docs, clashes, took } = merge(toDocs(useStore.getState()), baseOf(snap.docs), snap.docs)
+  if (clashes.length > 0) {
+    clearTimeout(timer)
+    useSyncStatus.setState({ status: 'conflict', clashes })
+    return false
+  }
+  if (took) {
+    const data = fromDocs(docs)
+    useStore.getState().importData({ ...data, session: data.session ?? useStore.getState().session })
+  }
+  useCloud.setState({ rev: snap.rev, saved: hashes(snap.docs), sent: {} })
+  return true
+}
+
+/** What this device last knew the club had, counting its own saves that got there without a reply. */
+export function baseOf(server: Record<string, string>): Record<string, string> {
+  const { saved, sent = {} } = useCloud.getState()
+  const base = { ...saved }
+  for (const [id, tries] of Object.entries(sent)) {
+    const now = id in server ? hashOf(server[id]) : ''
+    if (!tries.includes(now)) continue
+    if (now) base[id] = now
+    else delete base[id]
+  }
+  return base
+}
+
 // --- Saving ---
 
 let timer: number | undefined
@@ -234,18 +301,35 @@ export async function save() {
     const batches = changes(toDocs(useStore.getState()), useCloud.getState().saved)
     if (batches.length > 0) useSyncStatus.setState({ status: 'saving' })
     for (const b of batches) {
+      useCloud.setState((s) => {
+        const sent = { ...s.sent }
+        const add = (id: string, h: string) => (sent[id] = [...(sent[id] ?? []), h].slice(-20))
+        for (const [id, json] of Object.entries(b.put)) add(id, hashOf(json))
+        for (const id of b.remove) add(id, '')
+        return { sent }
+      })
       const { rev } = await api<{ rev: number }>('POST', '/club/save', { baseRev: useCloud.getState().rev, ...b })
       useCloud.setState((s) => {
         const saved = { ...s.saved, ...hashes(b.put) }
         for (const id of b.remove) delete saved[id]
-        return { rev, saved }
+        const sent = { ...s.sent }
+        for (const id of [...Object.keys(b.put), ...b.remove]) delete sent[id]
+        return { rev, saved, sent }
       })
     }
     useSyncStatus.setState({ status: 'saved', savedAt: Date.now() })
   } catch (e) {
     const status = (e as Failure).status
-    if (status === 409) useSyncStatus.setState({ status: 'conflict' })
-    else if (status === 401 || status === 403) signInAgain()
+    if (status === 409) {
+      // Changed elsewhere, or this device's last save got there but its reply
+      // didn't (the internet dropped): merge with the club's copy and go again.
+      try {
+        if (reconcile(await fetchClub())) again = true
+      } catch {
+        useSyncStatus.setState({ status: 'offline' })
+        scheduleSave(RETRY_MS)
+      }
+    } else if (status === 401 || status === 403) signInAgain()
     else {
       useSyncStatus.setState({ status: 'offline' })
       scheduleSave(RETRY_MS)
@@ -263,8 +347,7 @@ let pulling = false
 
 /**
  * Bring this device up to date with the club: when another device saved
- * since, take the club's data. If this device also has changes not saved yet,
- * the organizer picks which to keep (see CloudBanner).
+ * since, take its changes and keep this device's unsaved ones (see reconcile).
  */
 export async function pull() {
   const { auth, club } = useCloud.getState()
@@ -274,10 +357,10 @@ export async function pull() {
     const snap = await fetchClub()
     // A save started meanwhile, or nothing changed: check again later.
     if (running || snap.club.id !== club.id || snap.rev === useCloud.getState().rev) return
-    if (changes(toDocs(useStore.getState()), useCloud.getState().saved).length > 0) {
-      clearTimeout(timer)
-      useSyncStatus.setState({ status: 'conflict' })
-    } else takeClubData(snap)
+    if (reconcile(snap)) {
+      if (changes(toDocs(useStore.getState()), useCloud.getState().saved).length > 0) scheduleSave(0)
+      else useSyncStatus.setState({ status: 'saved', savedAt: Date.now() })
+    }
   } catch (e) {
     const status = (e as Failure).status
     if (status === 401 || status === 403) signInAgain()
@@ -447,6 +530,7 @@ export async function signIn(username: string, password: string): Promise<SignIn
     club: undefined,
     rev: 0,
     saved: {},
+    sent: {},
   })
   return enter(before)
 }
@@ -455,18 +539,77 @@ export async function signIn(username: string, password: string): Promise<SignIn
 export const hasData = (d: Partial<ClubData>) =>
   (d.players?.length ?? 0) > 0 || (d.history?.length ?? 0) > 0 || (d.session?.attendees.length ?? 0) > 0
 
-/** Replace this device's data with the club's. */
+/** The data one side lost when the organizer picked the other (this device's, or the club's), to restore if that was wrong. */
+export interface ReplacedCopy {
+  at: number
+  /** Whose data it was. */
+  from: 'device' | 'club'
+  data: ClubData
+}
+
+const REPLACED_KEY = 'mbq-replaced'
+
+export function replacedCopy(): ReplacedCopy | undefined {
+  try {
+    const raw = localStorage.getItem(REPLACED_KEY)
+    return raw ? (JSON.parse(raw) as ReplacedCopy) : undefined
+  } catch {
+    return undefined
+  }
+}
+
+export function forgetReplacedCopy() {
+  try {
+    localStorage.removeItem(REPLACED_KEY)
+  } catch {
+    // Nothing kept.
+  }
+}
+
+/** Keep a copy of data about to be replaced, when it has anything the other side doesn't. */
+function keepCopy(from: ReplacedCopy['from'], data: ClubData, other: Record<string, string>) {
+  if (!hasData(data) || changes(toDocs(data), hashes(other)).length === 0) return
+  try {
+    localStorage.setItem(REPLACED_KEY, JSON.stringify({ at: Date.now(), from, data } satisfies ReplacedCopy))
+  } catch {
+    // Storage full or private mode: nothing kept.
+  }
+}
+
+/** Put a kept copy back on this device (it saves to the club as usual), keeping this device's data as the copy instead. */
+export function restoreReplacedCopy() {
+  const copy = replacedCopy()
+  if (!copy) return
+  const local = useStore.getState()
+  forgetReplacedCopy()
+  keepCopy('device', local, toDocs(copy.data))
+  useStore.getState().importData(copy.data)
+}
+
+/** Replace this device's data with the club's (keeping a copy of this device's changes not saved yet). */
 export function takeClubData(snap: ClubSnapshot) {
+  const local = useStore.getState()
+  if (changes(toDocs(local), useCloud.getState().saved).length > 0) keepCopy('device', local, snap.docs)
   const data = fromDocs(snap.docs)
   // A club with nothing saved yet starts this device on a fresh session too.
   useStore.getState().importData({ ...data, session: data.session ?? newSession() })
-  useCloud.setState({ club: snap.club, rev: snap.rev, saved: hashes(snap.docs), lastClubId: snap.club.id })
+  useCloud.setState({ club: snap.club, rev: snap.rev, saved: hashes(snap.docs), sent: {}, lastClubId: snap.club.id })
   useSyncStatus.setState({ status: 'saved', savedAt: Date.now() })
 }
 
-/** Keep this device's data and save it over the club's. */
+/** What clashing documents hold, for the conflict banner: "today's session and the players". */
+export function clashLabel(ids: string[]): string {
+  const what = (id: string) =>
+    id === 'session' ? "today's session" : id === 'players' ? 'the players' : id === 'schedule' ? 'the schedule' : id === 'seasons' ? 'the seasons' : 'past sessions'
+  const list = [...new Set(ids.map(what))]
+  return list.length > 1 ? `${list.slice(0, -1).join(', ')} and ${list[list.length - 1]}` : (list[0] ?? 'the data')
+}
+
+/** Keep this device's data and save it over the club's (keeping a copy of the club's). */
 export function keepThisDevice(snap: ClubSnapshot) {
-  useCloud.setState({ club: snap.club, rev: snap.rev, saved: hashes(snap.docs), lastClubId: snap.club.id })
+  const theirs = fromDocs(snap.docs)
+  keepCopy('club', { ...theirs, session: theirs.session ?? newSession() }, toDocs(useStore.getState()))
+  useCloud.setState({ club: snap.club, rev: snap.rev, saved: hashes(snap.docs), sent: {}, lastClubId: snap.club.id })
   useSyncStatus.setState({ status: 'saving' })
   void save()
 }

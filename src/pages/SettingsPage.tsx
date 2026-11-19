@@ -4,7 +4,7 @@ import { costSummary, courtBooking, dueFor, money, pricingOf } from '../lib/cost
 import { longDate } from '../lib/stats'
 import { ClubAccountCard } from '../components/Cloud'
 import { EmptyState, MoneyField, Stepper } from '../components/ui'
-import { useCloud } from '../lib/cloud'
+import { forgetReplacedCopy, replacedCopy, restoreReplacedCopy, useCloud } from '../lib/cloud'
 import { usePlayerMap, useStore } from '../store/useStore'
 import type { PricingStyle, Session } from '../types'
 
@@ -93,6 +93,11 @@ export function SettingsPage() {
   const fileRef = useRef<HTMLInputElement>(null)
   const [lastBackup, setLastBackup] = useState(readLastBackup)
   const club = useCloud((s) => s.club)
+  const [copy, setCopy] = useState(replacedCopy)
+  const copyGames = copy ? [copy.data.session, ...copy.data.history].reduce((n, s) => n + (s?.games.length ?? 0), 0) : 0
+  const copyWhen = copy
+    ? new Date(copy.at).toLocaleString(undefined, { weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' })
+    : ''
 
   const exportData = () => setLastBackup(exportBackup())
 
@@ -147,6 +152,37 @@ export function SettingsPage() {
               {lastBackup ? `Last backup ${ago(lastBackup)}` : 'No backup from this iPad yet'}
               {stale && ' · export one soon'}
             </div>
+            {copy && (
+              <div className="space-y-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+                <p>
+                  <strong>Copy kept {copyWhen}:</strong>{' '}
+                  {copy.from === 'device' ? "this iPad's data" : `${club?.name ?? 'the club'}'s data from another device`}, replaced
+                  when the two didn&apos;t match ({copy.data.players.length} players, {copyGames} games).
+                </p>
+                <div className="flex gap-2">
+                  <button
+                    className="d-btn d-btn-sm d-btn-warning flex-1"
+                    onClick={() => {
+                      if (!confirm("Put this copy back on this iPad? The iPad's current data is kept as the copy instead.")) return
+                      restoreReplacedCopy()
+                      setCopy(replacedCopy())
+                    }}
+                  >
+                    Restore it
+                  </button>
+                  <button
+                    className="d-btn d-btn-sm d-btn-ghost flex-1"
+                    onClick={() => {
+                      if (!confirm('Delete this copy? It cannot be undone.')) return
+                      forgetReplacedCopy()
+                      setCopy(undefined)
+                    }}
+                  >
+                    Delete copy
+                  </button>
+                </div>
+              </div>
+            )}
             <button className="d-btn d-btn-primary w-full" onClick={exportData}>
               Export backup
             </button>
