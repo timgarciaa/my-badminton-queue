@@ -1,6 +1,6 @@
 import { afterAll, afterEach, describe, expect, it, vi } from 'vitest'
 import type { Session } from '../types'
-import { bumpedPlayers, fairShare, meetCounts, metPairs, pairKey, partnerCounts, playStreaks, splitTeams, suggestSwap } from './balance'
+import { bumpedPlayers, fairShare, idleTimes, meetCounts, metPairs, pairKey, partnerCounts, playStreaks, splitTeams, suggestSwap } from './balance'
 import { byName, costSummary, courtBooking, money, sessionStarted, shuttleCount, shuttleLines, shuttlesInStock } from './cost'
 import type { Help } from './balance'
 import { parseNames } from './importNames'
@@ -9,7 +9,7 @@ import { checkSchedule } from './useScheduleClock'
 import { findPlayer, publicPath } from './publicStats'
 import { matchSkill, planGames, winnersStayGame } from './plan'
 import { arrivals, bestRecord, blowoutGames, deuceGames, scoreLeader, checkinPlaces, checkinStandings, duoRecords, form, mateRecords, mostOften, gameExtremes, gameTime, helpFrom, ordinal, places, playedGames, sessionsWithin, standings, playerRecords, rivalries, streaks, winRate, winsPlaces, winsStandings, worstRecord } from './stats'
-import { dequeue, enqueue, move, nextFour, placeByArrival, pushFront, swap } from './queue'
+import { applySwap, dequeue, enqueue, move, nextFour, placeByArrival, pushFront, swap } from './queue'
 import { gapCounts, niceTicks, overall, playerDays, sessionTrend, sessionTrends } from './trends'
 import { isHelpStruggling, isSkillMatch, migrateStore, newSession, playedOn, redate, useStore } from '../store/useStore'
 
@@ -37,6 +37,15 @@ describe('queue', () => {
     expect(move(['a', 'b', 'c'], 'c', -1)).toEqual(['a', 'c', 'b'])
     expect(move(['a', 'b', 'c'], 'a', -5)).toEqual(['a', 'b', 'c'])
     expect(swap(['a', 'b', 'c', 'd', 'e'], 'b', 'e')).toEqual(['a', 'e', 'c', 'd', 'b'])
+  })
+
+  it('puts the player a swap moved back first in line for the next game', () => {
+    // f moves up for b: b waits first, not back where f was.
+    expect(applySwap(['a', 'b', 'c', 'd', 'e', 'f', 'g'], { in: 'f', out: 'b' })).toEqual(['a', 'f', 'c', 'd', 'b', 'e', 'g'])
+    // Two swapped: both wait first, in their order.
+    expect(applySwap(['a', 'b', 'c', 'd', 'e', 'f', 'g'], { in: 'g', out: 'a', also: { in: 'f', out: 'c' } })).toEqual(['g', 'b', 'f', 'd', 'a', 'c', 'e'])
+    // Players held for a set game in between stay where they are; the game is given.
+    expect(applySwap(['a', 'x', 'b', 'c', 'd', 'e', 'f'], { in: 'f', out: 'b' }, ['a', 'f', 'c', 'd'])).toEqual(['a', 'x', 'f', 'c', 'd', 'b', 'e'])
     expect(pushFront(['x', 'y'], ['a', 'b'])).toEqual(['a', 'b', 'x', 'y'])
   })
 })
@@ -67,17 +76,31 @@ describe('balance', () => {
     expect(pairs(s)).toEqual(['e|h', 'f|g'])
   })
 
-  it('keeps skill balance ahead of mixed pairs', () => {
+  it('puts mixed doubles ahead of an even skill split', () => {
+    // a(5) d(1) men, b(4) c(2) women: men vs women would be 6 v 6, mixed is at best 7 v 5.
     const genders: Record<string, string> = { a: 'M', d: 'M', b: 'F', c: 'F' }
     const s = splitTeams(['a', 'b', 'c', 'd'], skillOf, { genderOf: (id) => genders[id] })
-    expect(s.diff).toBe(0)
-    expect(pairs(s)).toEqual(['a|d', 'b|c'])
+    expect(s.diff).toBe(2)
+    expect(pairs(s)).toEqual(['a|c', 'b|d'])
   })
 
-  it('prefers fresh partners over mixed pairs', () => {
+  it('plays mixed doubles with fresh partners, and only repeats no partner for it', () => {
     const genders: Record<string, string> = { e: 'M', f: 'F', g: 'M', h: 'F' }
-    const s = splitTeams(['e', 'f', 'g', 'h'], skillOf, { partners: used('e|h'), genderOf: (id) => genders[id] })
-    expect(pairs(s)).toEqual(['e|g', 'f|h'])
+    const genderOf = (id: string) => genders[id]
+    expect(pairs(splitTeams(['e', 'f', 'g', 'h'], skillOf, { partners: used('e|h'), genderOf }))).toEqual(['e|f', 'g|h'])
+    // Both mixed splits repeat a partner from today: men vs women instead.
+    expect(pairs(splitTeams(['e', 'f', 'g', 'h'], skillOf, { partners: used('e|f', 'e|h'), genderOf }))).toEqual(['e|g', 'f|h'])
+  })
+
+  it("prefers mixed doubles to avoiding last session's partners (game 10, Nov 22)", () => {
+    // Tim & Irish partnered earlier today; Tim & Ching last session; skill matching off.
+    const genders: Record<string, string> = { tim: 'M', mj: 'M', ching: 'F', irish: 'F' }
+    const s = splitTeams(['tim', 'mj', 'ching', 'irish'], () => 3, {
+      genderOf: (id) => genders[id],
+      partners: used('irish|tim'),
+      lastPartners: used('ching|tim'),
+    })
+    expect(pairs(s)).toEqual(['ching|tim', 'irish|mj'])
   })
 
   it('accepts a slightly less even game for fresh partners', () => {
@@ -144,6 +167,60 @@ describe('balance', () => {
     const idea = suggestSwap(['a', 'b', 'c', 'd', 'e'], skillOf, { met: meetCounts(prev) })
     expect(idea).toMatchObject({ reason: 'variety', in: 'e' })
     expect(['a', 'b']).toContain(idea!.out)
+  })
+
+  it("doesn't move up someone just off court ahead of a player who has waited longer", () => {
+    // a,b met before, so e would freshen the game, but e only just finished a game.
+    const prev = [{ id: 'g1', court: 1, teamA: ['a', 'x'], teamB: ['b', 'y'], startedAt: 0, shuttles: 0 }] as Session['games']
+    const min = 60_000
+    const idle = new Map([['a', 10 * min], ['b', 10 * min], ['c', 9 * min], ['d', 9 * min], ['e', 30_000]])
+    expect(suggestSwap(['a', 'b', 'c', 'd', 'e'], skillOf, { met: meetCounts(prev), idle })).toBeNull()
+    // Rested a few minutes but still 6 less than a and b: they keep their places.
+    idle.set('e', 4 * min)
+    expect(suggestSwap(['a', 'b', 'c', 'd', 'e'], skillOf, { met: meetCounts(prev), idle })).toBeNull()
+    // Waited about as long: the swap is fine.
+    idle.set('e', 8 * min)
+    expect(suggestSwap(['a', 'b', 'c', 'd', 'e'], skillOf, { met: meetCounts(prev), idle })).toMatchObject({ reason: 'variety', in: 'e' })
+    idle.set('e', 30_000).set('a', 45_000).set('b', 45_000)
+    expect(suggestSwap(['a', 'b', 'c', 'd', 'e'], skillOf, { met: meetCounts(prev), idle })).toMatchObject({ in: 'e' })
+  })
+
+  it("never swaps players in just to make mixed doubles", () => {
+    // e,g men; f,h women; e has partnered both women today, so this game is men vs women.
+    const genders: Record<string, string> = { e: 'M', f: 'F', g: 'M', h: 'F', i: 'F' }
+    const idea = suggestSwap(['e', 'f', 'g', 'h', 'i'], (id) => skills[id] ?? 2, { partners: used('e|f', 'e|h'), genderOf: (id) => genders[id] })
+    expect(idea).toBeNull()
+  })
+
+  it("doesn't move back someone who has waited much longer just for new people", () => {
+    // Carlo, Eriane, Densyo, Uly are next; Eriane and Densyo partnered earlier, so they
+    // play on opposite sides. Pastor Bri (fresh) has waited 17 min to their 25.
+    const prev = [{ id: 'g3', court: 3, teamA: ['eriane', 'densyo'], teamB: ['x', 'y'], startedAt: 0, shuttles: 0 }] as Session['games']
+    const min = 60_000
+    const idle = new Map([['carlo', 25 * min], ['eriane', 25 * min], ['densyo', 25 * min], ['uly', 18 * min], ['bri', 17 * min]])
+    const queue = ['carlo', 'eriane', 'densyo', 'uly', 'bri']
+    const opts = { met: meetCounts(prev), partners: partnerCounts(prev), idle }
+    expect(suggestSwap(queue, () => 3, opts)).toBeNull()
+    const split = splitTeams(queue.slice(0, 4), () => 3, opts)
+    expect(split.repeats).toBe(0)
+    // About as long a wait: variety still wins.
+    idle.set('bri', 24 * min)
+    expect(suggestSwap(queue, () => 3, opts)).toMatchObject({ reason: 'variety', in: 'bri' })
+  })
+
+  it('still moves someone just off court up to avoid a repeat partnership', () => {
+    const idle = new Map([['e', 10 * 60_000], ['f', 10 * 60_000], ['g', 10 * 60_000], ['h', 10 * 60_000], ['a', 30_000]])
+    expect(suggestSwap(['e', 'f', 'g', 'h', 'a'], skillOf, { partners: used('e|f', 'e|g', 'e|h'), idle })).toMatchObject({ reason: 'repeat', in: 'a' })
+  })
+
+  it('times how long each player has been off court', () => {
+    const games = [
+      { id: 'g1', court: 1, teamA: ['a', 'b'], teamB: ['c', 'd'], startedAt: 1000, endedAt: 5000, shuttles: 0 },
+      { id: 'g2', court: 2, teamA: ['e', 'f'], teamB: ['g', 'h'], startedAt: 2000, shuttles: 0 },
+    ] as Session['games']
+    const idle = idleTimes(games, [{ playerId: 'a', checkedInAt: 0 }, { playerId: 'i', checkedInAt: 500 }, { playerId: 'j', checkedInAt: 6000 }], 9000)
+    // a since their game ended; i (early) since play began; j since checking in.
+    expect([...idle]).toEqual([['a', 4000], ['i', 8000], ['j', 3000]])
   })
 
   it('swaps two players when one swap still repeats a partnership', () => {
@@ -700,7 +777,8 @@ describe('skill matching off', () => {
     const genders: Record<string, string> = { a: 'M', b: 'F', c: 'F', d: 'M' }
     const teams = (s: ReturnType<typeof splitTeams>) => [pairKey(s.teamA), pairKey(s.teamB)].sort()
     const genderOf = (id: string) => genders[id]
-    expect(teams(splitTeams(['a', 'b', 'c', 'd'], skillOf, { genderOf }))).toEqual(['a|d', 'b|c'])
+    // Mixed either way; with skill on, the more even of the two mixed splits.
+    expect(teams(splitTeams(['a', 'b', 'c', 'd'], skillOf, { genderOf }))).toEqual(['a|c', 'b|d'])
     const split = splitTeams(['a', 'b', 'c', 'd'], flat, { genderOf })
     expect(split.repeatedPairs).toEqual([])
     expect(teams(split)).not.toEqual(['a|d', 'b|c'])

@@ -157,8 +157,8 @@ function beginGame(
   if (setId) game.set = true
   if (stayed) game.stayed = stayed
   const ids = [...teamA, ...teamB]
-  // The swapped-out player takes the swapped-in player's place in line.
-  const queue = gameSwap ? applySwap(s.queue, gameSwap) : s.queue
+  // The swapped-out player waits first in line for the next game.
+  const queue = gameSwap ? applySwap(s.queue, gameSwap, [...teamA, ...teamB]) : s.queue
   // Ready sets were waiting behind this game; they play next.
   const setGames = s.setGames
     ?.filter((g) => g.id !== setId)

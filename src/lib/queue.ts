@@ -31,10 +31,24 @@ export function swap(queue: string[], outId: string, inId: string): string[] {
   return queue.map((id) => (id === outId ? inId : id === inId ? outId : id))
 }
 
-/** Apply an automatic swap (one or two players) to the queue. */
-export function applySwap(queue: string[], s: { in: string; out: string; also?: { in: string; out: string } }): string[] {
-  const once = swap(queue, s.out, s.in)
-  return s.also ? swap(once, s.also.out, s.also.in) : once
+/**
+ * Apply an automatic swap (one or two players) to the queue: whoever moves up
+ * takes the place of the player they replace, and that player waits first in
+ * line for the following game (not back where the other one was).
+ * game: the four who play (by default the first four once swapped).
+ */
+export function applySwap(
+  queue: string[],
+  s: { in: string; out: string; also?: { in: string; out: string } },
+  game?: string[],
+): string[] {
+  const moves = s.also ? [s, s.also] : [s]
+  const ins = new Set(moves.map((m) => m.in))
+  const outs = queue.filter((id) => moves.some((m) => m.out === id))
+  const placed = queue.filter((id) => !ins.has(id)).map((id) => moves.find((m) => m.out === id)?.in ?? id)
+  const four = game ?? placed.slice(0, 4)
+  const after = Math.max(...four.map((id) => placed.indexOf(id))) + 1
+  return [...placed.slice(0, after), ...outs, ...placed.slice(after)]
 }
 
 /**

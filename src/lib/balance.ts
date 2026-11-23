@@ -55,6 +55,8 @@ export interface BalanceOptions {
   keep?: Set<string>
   /** Games each player has played this session (see fairShare), so swaps keep everyone's share even. */
   games?: Map<string, number>
+  /** How long each player has been off court (see idleTimes), so a swap never jumps someone who waited longer. */
+  idle?: Map<string, number>
 }
 
 /** The three distinct ways to split four players into two pairs. */
@@ -174,6 +176,34 @@ export function playStreaks(games: Game[]): Map<string, number> {
   return out
 }
 
+/**
+ * How long each player has been off court (ms): since their last game ended,
+ * or since they checked in (or play began, for early arrivals).
+ */
+export function idleTimes(games: Game[], attendees: { playerId: string; checkedInAt: number }[], now: number): Map<string, number> {
+  const firstStart = Math.min(...games.map((g) => g.startedAt))
+  const lastEnd = new Map<string, number>()
+  for (const g of games) {
+    if (g.endedAt === undefined) continue
+    for (const id of [...g.teamA, ...g.teamB]) lastEnd.set(id, Math.max(lastEnd.get(id) ?? 0, g.endedAt))
+  }
+  return new Map(attendees.map((a) => [a.playerId, now - Math.max(a.checkedInAt, lastEnd.get(a.playerId) ?? 0, Math.min(firstStart, now))]))
+}
+
+/**
+ * A swap only moves someone up who has been off court at least this long, or
+ * as long as the player they replace: nobody waits longer so that someone who
+ * just finished can play again straight away.
+ */
+export const SWAP_REST = 3 * 60_000
+
+/**
+ * For new people (or a more even game), a swap never moves up someone who has
+ * waited more than this much less than the player they replace: a long wait
+ * comes before variety. A rest, a repeat partner or the same four again still can.
+ */
+export const SWAP_GRACE = 3 * 60_000
+
 export function pairKey([x, y]: Pair): string {
   return x < y ? `${x}|${y}` : `${y}|${x}`
 }
@@ -182,9 +212,9 @@ export function pairKey([x, y]: Pair): string {
  * Split four players into two teams. In order of priority:
  * 1. fresh partners (rotate who plays with whom),
  * 2. with `help`: a struggling player partners the strongest player in the four,
- * 3. partners who weren't teammates last session,
- * 4. even total skill,
- * 5. one male + one female per team.
+ * 3. mixed doubles: with two men and two women, one of each per team (never men vs women),
+ * 4. partners who weren't teammates last session,
+ * 5. even total skill.
  */
 export function splitTeams(
   four: string[],
@@ -219,10 +249,10 @@ export function splitTeams(
   })
   const minDiff = Math.min(...scored.map((s) => s.diff))
   const unmixed = (s: Split) => Number(sameGender(s.teamA)) + Number(sameGender(s.teamB))
-  // Help (2000) outweighs last session's partners (at most 2 × 300), any skill gap and the
-  // gender mix (at most 820), never a repeat partner today (5000).
+  // A repeat partner today (5000) outweighs help (2000), which outweighs mixed doubles
+  // (900 a same-gender team), then last session's partners (300 each) and the skill gap (100 a point).
   const unhelped = (s: ScoredSplit) => (canHelp && !s.helped ? 2000 : 0)
-  const score = (s: ScoredSplit) => s.repeats * 5000 + unhelped(s) + s.lastRepeats * 300 + s.diff * 100 + unmixed(s) * 10
+  const score = (s: ScoredSplit) => s.repeats * 5000 + unhelped(s) + unmixed(s) * 900 + s.lastRepeats * 300 + s.diff * 100
   return scored
     .filter((s) => s.diff <= minDiff + slack)
     .reduce((best, s) => (score(s) < score(best) ? s : best))
@@ -270,6 +300,7 @@ export function suggestSwap(
     played = new Map(),
     keep = new Set(),
     games = new Map(),
+    idle,
     ...opts
   }: BalanceOptions & { threshold?: number; lookahead?: number } = {},
 ): SwapSuggestion | null {
@@ -302,7 +333,12 @@ export function suggestSwap(
   if (!needsRest && !behind && current.repeats === 0 && metTotal(four, met) === 0 && lopsided(current) === 0) return null
   let best: { cost: number; idea: SwapSuggestion } | null = null
   // Fair share gives way only to a rest or to avoiding a repeat partner.
-  const unfair = (m: { in: string; out: string }) => gamesOf(m.in) > gamesOf(m.out) && !tired(m.out) && current.repeats === 0
+  const unfair = (m: { in: string; out: string }) =>
+    (gamesOf(m.in) > gamesOf(m.out) && !tired(m.out) && current.repeats === 0) ||
+    // Someone just off court jumping a player who has waited longer, except for a rest or to avoid a repeat partner.
+    (!!idle && !tired(m.out) && current.repeats === 0 && (idle.get(m.in) ?? 0) < SWAP_REST && (idle.get(m.out) ?? 0) > (idle.get(m.in) ?? 0) + 60_000) ||
+    // For variety alone, nobody who has waited clearly longer is moved back.
+    (!!idle && !tired(m.out) && current.repeats === 0 && !isRematch && (idle.get(m.out) ?? 0) - (idle.get(m.in) ?? 0) > SWAP_GRACE)
   const consider = (moves: { in: string; out: string }[]) => {
     if (moves.some(unfair)) return
     const trial = four.map((id) => moves.find((m) => m.out === id)?.in ?? id)

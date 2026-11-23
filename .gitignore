@@ -25,3 +25,6 @@ dist-ssr
 
 # Local Claude Code preview config
 .claude/
+
+# Club data exported from the cloud (real names): never commit
+data/

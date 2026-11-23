@@ -2,7 +2,7 @@ import { useState, type PointerEvent as ReactPointerEvent } from 'react'
 import { setIds, type PlannedGame } from '../lib/plan'
 import { isHelpStruggling, isSkillMatch, useStore } from '../store/useStore'
 import type { GameSwap, Pair, Player, SetGame } from '../types'
-import { EmptyState, PlayerTags } from './ui'
+import { EmptyState, PlayerTags, useNow } from './ui'
 
 const SWAP_REASON: Record<GameSwap['reason'], string> = {
   rematch: " so the same four don't play together again",
@@ -345,11 +345,12 @@ function QueueRow({
       )}
       <button type="button" onClick={fixed ? undefined : onTap} className="min-w-0 flex-1 text-left">
         <div className="text-lg leading-tight font-semibold break-words">{p?.name}</div>
-        <div className="mt-0.5 flex items-center gap-2 text-xs text-slate-500">
+        <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-slate-500">
           {p && <PlayerTags player={p} />}
-          <span>
+          <span className="whitespace-nowrap">
             {gamesPlayed} {gamesPlayed === 1 ? 'game' : 'games'}
           </span>
+          <WaitTime id={id} />
         </div>
       </button>
       {!fixed && (
@@ -376,6 +377,37 @@ function QueueRow({
         Rest
       </button>
     </li>
+  )
+}
+
+/** A wait this long (about two games) is shown in amber, so the organizer can spot who's been sitting out. */
+const LONG_WAIT = 20 * 60_000
+
+/**
+ * How long a waiting player has been off court: since their last game ended,
+ * or since they checked in (from the first game, for early arrivals). Nothing
+ * before play starts.
+ */
+function WaitTime({ id }: { id: string }) {
+  const now = useNow(15_000)
+  const since = useStore((s) => {
+    const games = s.session.games
+    if (games.length === 0) return undefined
+    const checkedIn = s.session.attendees.find((a) => a.playerId === id)?.checkedInAt ?? 0
+    const firstStart = Math.min(...games.map((g) => g.startedAt))
+    const lastEnd = Math.max(0, ...games.filter((g) => g.endedAt && [...g.teamA, ...g.teamB].includes(id)).map((g) => g.endedAt!))
+    return Math.max(checkedIn, firstStart, lastEnd)
+  })
+  if (since === undefined) return null
+  const wait = Math.max(0, now - since)
+  const min = Math.floor(wait / 60_000)
+  return (
+    <span
+      className={`whitespace-nowrap ${wait >= LONG_WAIT ? 'font-semibold text-amber-700' : ''}`}
+      title={`Off court for ${min} min${wait >= LONG_WAIT ? ': a long wait, about two games' : ''}`}
+    >
+      {min < 1 ? '<1' : min}m wait
+    </span>
   )
 }
 

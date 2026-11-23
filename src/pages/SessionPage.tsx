@@ -1,15 +1,16 @@
 import { useEffect, useRef, useState } from 'react'
-import { allSplits, bumpedPlayers, fairShare, meetCounts, partnerCounts, playStreaks } from '../lib/balance'
+import { allSplits, partnerCounts } from '../lib/balance'
 import { byName, gameShuttleType, shuttlesInStock } from '../lib/cost'
-import { matchSkill, planGames, winnersStayGame } from '../lib/plan'
+import { matchSkill, winnersStayGame } from '../lib/plan'
+import { planNext } from '../lib/nextGame'
 import { QueuePanel } from '../components/QueuePanel'
 import { clock, dayLabel, sameDay, upcoming } from '../lib/schedule'
 import { PointsInput } from '../components/Score'
 import { SetGameDialog } from '../components/SetGameDialog'
 import { PlayerTags, Stepper, elapsed, useNow } from '../components/ui'
-import { gameNumber, helpFrom, isFinishedScore, parseScore, playedGames, scoreLeader, sessionsWithin } from '../lib/stats'
-import { isHelpStruggling, isSkillMatch, isWinnersStay, isWinnersTogether, usePlayerMap, useStore } from '../store/useStore'
-import type { Game, GameSwap, Pair, Player, Session } from '../types'
+import { gameNumber, isFinishedScore, parseScore, scoreLeader } from '../lib/stats'
+import { isSkillMatch, isWinnersStay, isWinnersTogether, usePlayerMap, useStore } from '../store/useStore'
+import type { Game, GameSwap, Pair, Player } from '../types'
 
 const SWAP_REASON_SHORT: Record<GameSwap['reason'], string> = {
   rematch: ' · avoids a rematch',
@@ -49,46 +50,6 @@ function useWidth<T extends HTMLElement>() {
     return () => ro.disconnect()
   }, [])
   return [ref, width] as const
-}
-
-/** The latest finished session before this one with games in it. */
-function lastSession(session: Session, history: Session[]): Session | undefined {
-  return history
-    .filter((s) => s.id !== session.id && s.games.some((g) => g.endedAt))
-    .reduce<Session | undefined>((a, s) => (!a || s.date > a.date ? s : a), undefined)
-}
-
-/**
- * Plan the next game exactly as the queue shows it and Next game starts it.
- * Help for struggling players looks at last session and the last 3 months, today included.
- */
-function planNext(session: Session, players: Map<string, Player>, history: Session[]) {
-  const last = lastSession(session, history)
-  const lastGames = last ? playedGames([last]) : []
-  const help = isHelpStruggling(session)
-    ? helpFrom(playedGames(sessionsWithin([session, ...history], 3)), lastGames, playedGames([session]))
-    : undefined
-  const played = new Set(session.games.flatMap((g) => [...g.teamA, ...g.teamB]))
-  return planGames(
-    session.queue,
-    matchSkill((id) => players.get(id)?.skill ?? 3, isSkillMatch(session)),
-    {
-      partners: partnerCounts(session.games),
-      lastPartners: partnerCounts(lastGames),
-      met: meetCounts(session.games),
-      played: playStreaks(session.games),
-      games: fairShare(session.games, session.attendees),
-      // Early arrivals who haven't played yet keep their place.
-      keep: new Set(session.queue.filter((id) => !played.has(id))),
-      genderOf: (id) => players.get(id)?.gender,
-      autoSwap: !session.locked?.length,
-      locked: bumpedPlayers(session.games),
-      fixed: session.nextTeams,
-      sets: session.setGames,
-      help,
-    },
-    1,
-  )
 }
 
 export function SessionPage({ onGoToCheckIn }: { onGoToCheckIn: () => void }) {
