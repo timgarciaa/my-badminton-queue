@@ -71,7 +71,8 @@ const db = {
 //   { pk: code#<code>, sk: code, clubId }          join codes
 //   { pk: slug#<slug>, sk: slug, clubId }          public stats page link names
 const Clubs = process.env.CLUB_TABLE
-const get = async (pk, sk) => (await doc.send(new GetCommand({ TableName: Clubs, Key: { pk, sk } }))).Item
+// Strongly consistent: a device reading right after its own save sees that save.
+const get = async (pk, sk) => (await doc.send(new GetCommand({ TableName: Clubs, Key: { pk, sk }, ConsistentRead: true }))).Item
 const query = async (pk, prefix) => {
   const items = []
   let ExclusiveStartKey
@@ -82,6 +83,7 @@ const query = async (pk, prefix) => {
         KeyConditionExpression: '#pk = :pk AND begins_with(#sk, :prefix)',
         ExpressionAttributeNames: { '#pk': 'pk', '#sk': 'sk' },
         ExpressionAttributeValues: { ':pk': pk, ':prefix': prefix },
+        ConsistentRead: true,
         ExclusiveStartKey,
       }),
     )

@@ -18,6 +18,12 @@ export const CLOUD = !!(CHECKIN_API && AUTH_URL && CLIENT_ID)
 
 const SAVE_DELAY = 3000
 const RETRY_MS = 20_000
+/**
+ * How long a request may take before it's given up and tried again later: on
+ * wifi that has dropped, a request can otherwise hang for minutes and hold up
+ * every save after it. (Changeable for tests.)
+ */
+export const timing = { requestMs: 20_000 }
 /** How often an open app checks the club for changes made on other devices. */
 const PULL_MS = 2 * 60_000
 /** Per request; the server allows 90 documents at once. */
@@ -77,7 +83,7 @@ type Failure = Error & { status?: number; data?: Record<string, string> }
 
 /** Calls Cognito (or the dev server's stand-in): InitiateAuth and friends. */
 async function cognito<T>(action: string, body: unknown): Promise<T> {
-  const res = await fetch(AUTH_URL!, {
+  const res = await fetchInTime(AUTH_URL!, {
     method: 'POST',
     headers: {
       'content-type': 'application/x-amz-json-1.1',
@@ -113,9 +119,23 @@ async function idToken(): Promise<string> {
   return next.idToken
 }
 
+/** fetch, given up after timing.requestMs (a network failure: no status, so tried again later). */
+async function fetchInTime(url: string, init: RequestInit): Promise<Response> {
+  const stop = new AbortController()
+  const timeout = setTimeout(() => stop.abort(), timing.requestMs)
+  try {
+    const res = await fetch(url, { ...init, signal: stop.signal })
+    // The body can stall too.
+    const text = await res.text()
+    return new Response(text, { status: res.status, statusText: res.statusText })
+  } finally {
+    clearTimeout(timeout)
+  }
+}
+
 async function api<T>(method: string, path: string, body?: unknown): Promise<T> {
   const token = await idToken()
-  const res = await fetch(`${CHECKIN_API}${path}`, {
+  const res = await fetchInTime(`${CHECKIN_API}${path}`, {
     method,
     headers: { authorization: `Bearer ${token}`, ...(body !== undefined && { 'content-type': 'application/json' }) },
     body: body === undefined ? undefined : JSON.stringify(body),
@@ -250,6 +270,8 @@ export function merge(local: Record<string, string>, base: Record<string, string
  * thing. Returns false for a clash (the organizer picks, see CloudBanner).
  */
 function reconcile(snap: ClubSnapshot): boolean {
+  // Older than what this device already saved: nothing to take from it.
+  if (snap.rev < useCloud.getState().rev) return true
   const { docs, clashes, took } = merge(toDocs(useStore.getState()), baseOf(snap.docs), snap.docs)
   if (clashes.length > 0) {
     clearTimeout(timer)
@@ -303,7 +325,8 @@ export async function save() {
     for (const b of batches) {
       useCloud.setState((s) => {
         const sent = { ...s.sent }
-        const add = (id: string, h: string) => (sent[id] = [...(sent[id] ?? []), h].slice(-20))
+        // Retries while offline send the same thing again: keep each version once.
+        const add = (id: string, h: string) => (sent[id] = [...(sent[id] ?? []).filter((x) => x !== h), h].slice(-200))
         for (const [id, json] of Object.entries(b.put)) add(id, hashOf(json))
         for (const id of b.remove) add(id, '')
         return { sent }
@@ -355,8 +378,10 @@ export async function pull() {
   pulling = true
   try {
     const snap = await fetchClub()
-    // A save started meanwhile, or nothing changed: check again later.
-    if (running || snap.club.id !== club.id || snap.rev === useCloud.getState().rev) return
+    // A save started meanwhile, or nothing new: check again later. A save
+    // that finished while the answer was on its way makes it older than this
+    // device's data (a lower rev), and taking it would undo those changes.
+    if (running || snap.club.id !== club.id || snap.rev <= useCloud.getState().rev) return
     if (reconcile(snap)) {
       if (changes(toDocs(useStore.getState()), useCloud.getState().saved).length > 0) scheduleSave(0)
       else useSyncStatus.setState({ status: 'saved', savedAt: Date.now() })
